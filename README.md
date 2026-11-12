@@ -5,8 +5,12 @@ Belfry polls your GitHub notifications and shows each new one as a native macOS
 banner. Clicking a banner opens the pull request, issue or comment in your browser.
 
 - Menu-bar bell with your unread count
-- Dropdown with tabs by type (All, PRs, Issues, CI, Other) and unread items
+- Dropdown with tabs by type (All, Review, PRs, Issues, CI, Other) and unread items
   grouped by repository. Click to open, ✓ to mark read, or "Mark all read"
+- Review tab: every open PR waiting on your review (GitHub search
+  `review-requested:@me`, so it stays right after you read the notification),
+  with who asked. A banner like "@sam asked for your review" fires as soon as a
+  new PR lands there
 - CI filter: show all CI runs, failures only, or none. It applies to the list,
   the count and the banners
 - Every banner and row says what actually happened, not just GitHub's reason

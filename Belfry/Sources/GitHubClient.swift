@@ -175,6 +175,47 @@ final class GitHubClient {
         return FetchResult(threads: all, lastModified: lastModified, pollInterval: pollInterval)
     }
 
+    /// Open pull requests currently waiting on your review (direct or via a team).
+    func reviewRequests() async throws -> [ReviewRequest] {
+        var c = URLComponents(url: api.appendingPathComponent("search/issues"), resolvingAgainstBaseURL: false)!
+        c.queryItems = [
+            URLQueryItem(name: "q", value: "is:open is:pr review-requested:@me archived:false"),
+            URLQueryItem(name: "sort", value: "updated"),
+            URLQueryItem(name: "per_page", value: "100"),
+        ]
+        struct Page: Decodable { let items: [ReviewRequest] }
+        return try await fetch(Page.self, c.url!).items
+    }
+
+    private var cachedLogin: String?
+
+    func viewerLogin() async -> String? {
+        if let cachedLogin { return cachedLogin }
+        struct Me: Decodable { let login: String }
+        cachedLogin = try? await fetch(Me.self, api.appendingPathComponent("user")).login
+        return cachedLogin
+    }
+
+    /// Who most recently asked `login` (or one of their teams) to review this PR.
+    func requester(for pr: ReviewRequest, login: String?) async -> String? {
+        struct Event: Decodable {
+            struct User: Decodable { let login: String }
+            struct Team: Decodable { let slug: String }
+            let event: String
+            let actor: User?
+            let requested_reviewer: User?
+            let requested_team: Team?
+        }
+        var c = URLComponents(url: api.appendingPathComponent("repos/\(pr.repoFullName)/issues/\(pr.number)/events"),
+                              resolvingAgainstBaseURL: false)!
+        c.queryItems = [URLQueryItem(name: "per_page", value: "100")]
+        guard let url = c.url, let events = try? await fetch([Event].self, url) else { return nil }
+        let match = events.last { e in
+            e.event == "review_requested" && (e.requested_reviewer?.login == login || e.requested_team != nil)
+        }
+        return match?.actor?.login
+    }
+
     func markRead(threadId: String) async throws {
         let url = api.appendingPathComponent("notifications/threads/\(threadId)")
         let (data, response) = try await session.data(for: request(url, method: "PATCH"))
@@ -405,5 +446,31 @@ struct CIRun {
         default: mark = outcome.capitalized
         }
         return "\(mark) on \(branch)"
+    }
+}
+
+/// A pull request from the `review-requested:@me` search.
+struct ReviewRequest: Decodable, Identifiable, Equatable {
+    struct User: Decodable, Equatable { let login: String }
+    let number: Int
+    let title: String
+    let htmlURL: String
+    let repositoryURL: String
+    let updatedAt: String
+    let draft: Bool?
+    let user: User?
+
+    enum CodingKeys: String, CodingKey {
+        case number, title, draft, user
+        case htmlURL = "html_url"
+        case repositoryURL = "repository_url"
+        case updatedAt = "updated_at"
+    }
+
+    var id: String { htmlURL }
+
+    /// "https://api.github.com/repos/o/r" -> "o/r"
+    var repoFullName: String {
+        repositoryURL.components(separatedBy: "/repos/").last ?? repositoryURL
     }
 }

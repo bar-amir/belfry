@@ -15,6 +15,10 @@ final class NotificationStore: ObservableObject {
     /// nil until checked; false when macOS will not show Belfry's banners.
     @Published private(set) var bannersAllowed: Bool?
     @Published var selectedTab: ThreadTab = .all
+    /// Open PRs waiting on your review, newest activity first.
+    @Published private(set) var reviewRequests: [ReviewRequest] = []
+    /// PR URL -> login of whoever asked for the review.
+    @Published private(set) var requesters: [String: String] = [:]
     /// Resolved "what happened" per thread, keyed by thread id and valid for one `updated_at`.
     @Published private(set) var details: [String: (updatedAt: String, detail: ThreadDetail)] = [:]
     private var loadingDetails: Set<String> = []
@@ -36,7 +40,9 @@ final class NotificationStore: ObservableObject {
 
     var unreadCount: Int { threads.count }
 
-    func count(for tab: ThreadTab) -> Int { threads.filter(tab.contains).count }
+    func count(for tab: ThreadTab) -> Int {
+        tab == .review ? reviewRequests.count : threads.filter(tab.contains).count
+    }
 
     private var tabThreads: [GitHubThread] { threads.filter(selectedTab.contains) }
 
@@ -95,6 +101,7 @@ final class NotificationStore: ObservableObject {
         defer { isRefreshing = false }
 
         let client = GitHubClient(token: token)
+        let announcedReviews = await pollReviewRequests(client: client)
         do {
             let result = try await client.fetchNotifications(ifModifiedSince: lastModified)
             if let interval = result.pollInterval { serverPollInterval = interval }
@@ -103,7 +110,7 @@ final class NotificationStore: ObservableObject {
             lastError = nil
             guard let fresh = result.threads else { return } // 304: nothing changed
             allThreads = fresh.filter(\.unread)
-            await notifyNew(allThreads, client: client)
+            await notifyNew(allThreads, client: client, skipping: announcedReviews)
         } catch {
             lastError = error.localizedDescription
         }
@@ -111,7 +118,49 @@ final class NotificationStore: ObservableObject {
 
     // MARK: Banners
 
-    private func notifyNew(_ threads: [GitHubThread], client: GitHubClient) async {
+    /// Refreshes the review list and announces PRs that newly need your review.
+    /// Returns the PR URLs announced, so the matching notification thread isn't announced twice.
+    private func pollReviewRequests(client: GitHubClient) async -> Set<String> {
+        let current: [ReviewRequest]
+        do { current = try await client.reviewRequests() } catch {
+            NSLog("Belfry: review search failed: \(error.localizedDescription)")
+            return []
+        }
+        reviewRequests = current
+        let login = await client.viewerLogin()
+        for pr in current where requesters[pr.id] == nil {
+            if let who = await client.requester(for: pr, login: login) { requesters[pr.id] = who }
+        }
+
+        let previous = seen.pendingReviews
+        let dayAgo = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-86_400))
+        let fresh = current.filter { pr in
+            if let previous { return !previous.contains(pr.id) }
+            return pr.updatedAt >= dayAgo // first check: only announce recent requests
+        }
+        seen.pendingReviews = current.map(\.id)
+        seen.save()
+        for pr in fresh { postReviewBanner(for: pr) }
+        return Set(fresh.map(\.id))
+    }
+
+    private func postReviewBanner(for pr: ReviewRequest) {
+        let content = UNMutableNotificationContent()
+        content.title = pr.title
+        content.subtitle = "\(pr.repoFullName) #\(pr.number) · Review requested"
+        content.body = requesters[pr.id].map { "@\($0) asked for your review" } ?? "Waiting for your review"
+        content.threadIdentifier = pr.repoFullName
+        content.userInfo = [AppDelegate.urlKey: pr.htmlURL]
+        if soundEnabled { content.sound = .default }
+        UNUserNotificationCenter.current().add(
+            UNNotificationRequest(identifier: "review-\(pr.id)", content: content, trigger: nil))
+    }
+
+    func open(_ pr: ReviewRequest) {
+        if let url = URL(string: pr.htmlURL) { NSWorkspace.shared.open(url) }
+    }
+
+    private func notifyNew(_ threads: [GitHubThread], client: GitHubClient, skipping announcedReviews: Set<String>) async {
         let firstRun = seen.isFirstRun
         let dayAgo = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-86_400))
 
@@ -119,7 +168,12 @@ final class NotificationStore: ObservableObject {
         for thread in threads where seen.isNew(thread) {
             // On the very first run only announce the last day's activity; seed the rest silently.
             // Filtered-out threads are still marked seen, so re-enabling CI doesn't replay old runs.
-            if ciFilter.allows(thread), !firstRun || thread.updatedAt >= dayAgo { toNotify.append(thread) }
+            let alreadyAnnounced = thread.reason == "review_requested"
+                && thread.subject.url.flatMap(URL.init(string:)).flatMap(GitHubClient.rewrite)
+                    .map { announcedReviews.contains($0.absoluteString) } == true
+            if ciFilter.allows(thread), !alreadyAnnounced, !firstRun || thread.updatedAt >= dayAgo {
+                toNotify.append(thread)
+            }
             seen.mark(thread)
         }
         seen.save()
@@ -248,6 +302,8 @@ final class NotificationStore: ObservableObject {
 struct SeenStore: Codable {
     var updatedAtByThread: [String: String] = [:]
     var isFirstRun = true
+    /// PR URLs that were waiting on your review at the last poll; nil until the first review check.
+    var pendingReviews: [String]?
 
     private static var fileURL: URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -309,12 +365,13 @@ enum CIFilter: String, CaseIterable, Identifiable {
 
 /// Tabs in the dropdown, by notification subject type.
 enum ThreadTab: String, CaseIterable, Identifiable {
-    case all, pullRequests, issues, ci, other
+    case all, review, pullRequests, issues, ci, other
     var id: String { rawValue }
 
     var label: String {
         switch self {
         case .all: return "All"
+        case .review: return "Review"
         case .pullRequests: return "PRs"
         case .issues: return "Issues"
         case .ci: return "CI"
@@ -325,6 +382,7 @@ enum ThreadTab: String, CaseIterable, Identifiable {
     func contains(_ thread: GitHubThread) -> Bool {
         switch self {
         case .all: return true
+        case .review: return thread.reason == "review_requested"
         case .pullRequests: return thread.subject.type == "PullRequest"
         case .issues: return thread.subject.type == "Issue"
         case .ci: return thread.isCI

@@ -71,6 +71,8 @@ struct MenuContentView: View {
                 }
             }
             .padding(12)
+        } else if store.selectedTab == .review {
+            reviewList
         } else if store.groupedByRepo.isEmpty {
             Text(store.lastChecked == nil ? "Checking GitHub…"
                  : store.selectedTab != .all && !store.threads.isEmpty ? "Nothing in \(store.selectedTab.label)."
@@ -98,6 +100,23 @@ struct MenuContentView: View {
             }
             // A ScrollView has no ideal height inside a MenuBarExtra window, so size it explicitly.
             .frame(height: listHeight)
+        }
+    }
+
+    @ViewBuilder
+    private var reviewList: some View {
+        if store.reviewRequests.isEmpty {
+            Text("No pull requests are waiting on your review.")
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(20)
+        } else {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(store.reviewRequests) { ReviewRow(pr: $0) }
+                }
+            }
+            .frame(height: min(max(CGFloat(store.reviewRequests.count) * 70, 80), 460))
         }
     }
 
@@ -185,5 +204,43 @@ struct ThreadRow: View {
     static func relative(_ iso: String) -> String {
         guard let date = parser.date(from: iso) else { return iso }
         return formatter.localizedString(for: date, relativeTo: Date())
+    }
+}
+
+struct ReviewRow: View {
+    @EnvironmentObject private var store: NotificationStore
+    let pr: ReviewRequest
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "eye")
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 16)
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(pr.title).lineLimit(2)
+                Text(requestLine)
+                    .font(.callout)
+                    .foregroundStyle(Color.primary.opacity(0.8))
+                Text("\(pr.repoFullName) #\(pr.number)\(pr.draft == true ? " · draft" : "") · updated \(ThreadRow.relative(pr.updatedAt))")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 4)
+        }
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(hovering ? Color.primary.opacity(0.06) : .clear)
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .onTapGesture { store.open(pr) }
+        .help("Open in browser")
+    }
+
+    private var requestLine: String {
+        let author = pr.user.map { "by @\($0.login)" } ?? ""
+        if let who = store.requesters[pr.id] {
+            return who == pr.user?.login ? "@\(who) asked for your review" : "@\(who) asked for your review · \(author)"
+        }
+        return "Waiting for your review \(author)"
     }
 }

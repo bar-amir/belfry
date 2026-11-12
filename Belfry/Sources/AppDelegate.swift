@@ -35,6 +35,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let client = GitHubClient(token: token)
         do {
             let threads = (try await client.fetchNotifications(ifModifiedSince: nil).threads ?? []).filter(\.unread)
+            let reviews = try await client.reviewRequests()
+            let me = await client.viewerLogin()
+            print("Review requests for @\(me ?? "?"): \(reviews.count)")
+            for pr in reviews {
+                let who = await client.requester(for: pr, login: me)
+                print("    \(pr.repoFullName) #\(pr.number) \(pr.title) — asked by @\(who ?? "?")")
+            }
             print("Tabs: " + ThreadTab.allCases.map { tab in "\(tab.label) \(threads.filter(tab.contains).count)" }
                 .joined(separator: " · "))
             print("CI filter: " + CIFilter.allCases.map { f in "\(f.label) → \(threads.filter(f.allows).count)" }
