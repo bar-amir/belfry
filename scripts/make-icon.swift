@@ -1,9 +1,15 @@
-// Renders Belfry's app icon into the asset catalog.
+// Renders Belfry's app icon into the asset catalog: a glowing bell tower in deep space.
 // Usage: swift scripts/make-icon.swift Belfry/Resources/Assets.xcassets/AppIcon.appiconset
 import AppKit
 
 let outDir = URL(fileURLWithPath: CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : ".")
 try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+
+func hex(_ v: UInt32, _ a: CGFloat = 1) -> NSColor {
+    NSColor(srgbRed: CGFloat((v >> 16) & 0xFF) / 255, green: CGFloat((v >> 8) & 0xFF) / 255, blue: CGFloat(v & 0xFF) / 255, alpha: a)
+}
+
+struct LCG { var s: UInt64; mutating func next() -> Double { s = s &* 6364136223846793005 &+ 1442695040888963407; return Double(s >> 11) / Double(1 << 53) } }
 
 func render(size: CGFloat) -> Data {
     let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size), pixelsHigh: Int(size),
@@ -15,54 +21,92 @@ func render(size: CGFloat) -> Data {
     func r(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat) -> NSRect { NSRect(x: x * s, y: y * s, width: w * s, height: h * s) }
     func p(_ x: CGFloat, _ y: CGFloat) -> NSPoint { NSPoint(x: x * s, y: y * s) }
 
-    // Squircle background: dusk indigo to deep teal.
+    // Deep-space squircle with nebula glows.
     let bg = NSBezierPath(roundedRect: r(100, 100, 824, 824), xRadius: 185 * s, yRadius: 185 * s)
-    NSGradient(colors: [NSColor(red: 0.13, green: 0.16, blue: 0.38, alpha: 1),
-                        NSColor(red: 0.05, green: 0.42, blue: 0.47, alpha: 1)])!.draw(in: bg, angle: -70)
+    NSGradient(colors: [hex(0x1A1240), hex(0x070B14)])!.draw(in: bg, relativeCenterPosition: NSPoint(x: -0.2, y: 0.5))
+    NSGraphicsContext.saveGraphicsState()
+    bg.addClip()
+    let cg = NSGraphicsContext.current!.cgContext
+    func nebula(_ x: CGFloat, _ y: CGFloat, _ radius: CGFloat, _ color: NSColor) {
+        let colors = [color.cgColor, color.withAlphaComponent(0).cgColor] as CFArray
+        let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 1])!
+        cg.drawRadialGradient(gradient, startCenter: p(x, y), startRadius: 0, endCenter: p(x, y), endRadius: radius * s, options: [])
+    }
+    nebula(300, 800, 420, hex(0x6E40C9, 0.6))
+    nebula(800, 420, 380, hex(0x1F6FEB, 0.45))
+    nebula(380, 200, 340, hex(0x39D0E6, 0.22))
+    var rng = LCG(s: 0xBE11F7)
+    for _ in 0..<70 {
+        let x = 110 + rng.next() * 800, y = 110 + rng.next() * 800, d = 3 + rng.next() * 7
+        hex(0xFFFFFF, 0.35 + rng.next() * 0.55).setFill()
+        NSBezierPath(ovalIn: r(x, y, d, d)).fill()
+    }
+    NSGraphicsContext.restoreGraphicsState()
 
-    let stone = NSColor(red: 0.96, green: 0.93, blue: 0.86, alpha: 1)
-    let brass = NSColor(red: 0.98, green: 0.74, blue: 0.27, alpha: 1)
+    // Glow under everything that follows.
+    let glow = NSShadow()
+    glow.shadowColor = hex(0x8A7CFF, 0.9)
+    glow.shadowBlurRadius = 40 * s
+    glow.shadowOffset = .zero
 
-    // Tower: pointed roof, belfry arch frame, base.
-    stone.setFill()
+    // Tower: pointed roof, belfry arch, base.
+    NSGraphicsContext.saveGraphicsState()
+    glow.set()
+    hex(0xE6EDF3).setFill()
     let roof = NSBezierPath()
-    roof.move(to: p(512, 830)); roof.line(to: p(705, 640)); roof.line(to: p(319, 640)); roof.close()
+    roof.move(to: p(512, 820)); roof.line(to: p(700, 640)); roof.line(to: p(324, 640)); roof.close()
     roof.fill()
-    let frame = NSBezierPath(rect: r(345, 300, 334, 340))
+    let frame = NSBezierPath(rect: r(350, 310, 324, 330))
     let arch = NSBezierPath()
-    arch.move(to: p(395, 300)); arch.line(to: p(395, 500))
-    arch.appendArc(withCenter: p(512, 500), radius: 117 * s, startAngle: 180, endAngle: 0, clockwise: true)
-    arch.line(to: p(629, 300)); arch.close()
+    arch.move(to: p(398, 310)); arch.line(to: p(398, 505))
+    arch.appendArc(withCenter: p(512, 505), radius: 114 * s, startAngle: 180, endAngle: 0, clockwise: true)
+    arch.line(to: p(626, 310)); arch.close()
     frame.append(arch.reversed)
     frame.windingRule = .evenOdd
     frame.fill()
-    NSBezierPath(roundedRect: r(300, 236, 424, 70), xRadius: 14 * s, yRadius: 14 * s).fill()
+    NSBezierPath(roundedRect: r(306, 248, 412, 68), xRadius: 14 * s, yRadius: 14 * s).fill()
+    NSGraphicsContext.restoreGraphicsState()
 
-    // Bell inside the arch.
-    brass.setFill()
+    // Aurora bell.
     let bell = NSBezierPath()
-    bell.move(to: p(512, 588))
-    bell.curve(to: p(586, 470), controlPoint1: p(560, 588), controlPoint2: p(586, 540))
-    bell.curve(to: p(626, 382), controlPoint1: p(586, 420), controlPoint2: p(626, 410))
-    bell.line(to: p(398, 382))
-    bell.curve(to: p(438, 470), controlPoint1: p(398, 410), controlPoint2: p(438, 420))
-    bell.curve(to: p(512, 588), controlPoint1: p(438, 540), controlPoint2: p(464, 588))
+    bell.move(to: p(512, 590))
+    bell.curve(to: p(584, 474), controlPoint1: p(558, 590), controlPoint2: p(584, 542))
+    bell.curve(to: p(622, 390), controlPoint1: p(584, 426), controlPoint2: p(622, 416))
+    bell.line(to: p(402, 390))
+    bell.curve(to: p(440, 474), controlPoint1: p(402, 416), controlPoint2: p(440, 426))
+    bell.curve(to: p(512, 590), controlPoint1: p(440, 542), controlPoint2: p(466, 590))
     bell.close()
+    NSGraphicsContext.saveGraphicsState()
+    let bellGlow = NSShadow()
+    bellGlow.shadowColor = hex(0x58A6FF, 1)
+    bellGlow.shadowBlurRadius = 36 * s
+    bellGlow.shadowOffset = .zero
+    bellGlow.set()
+    hex(0x58A6FF).setFill()
     bell.fill()
-    NSBezierPath(ovalIn: r(486, 336, 52, 52)).fill()
+    NSGraphicsContext.restoreGraphicsState()
+    NSGradient(colors: [hex(0xA371F7), hex(0x58A6FF), hex(0x39D0E6)])!.draw(in: bell, angle: -60)
+    NSGradient(colors: [hex(0xA371F7), hex(0x39D0E6)])!.draw(in: NSBezierPath(ovalIn: r(487, 344, 50, 50)), angle: -60)
 
-    // Sound arcs.
-    brass.setStroke()
-    for (radius, alpha) in [(215.0, 0.9), (275.0, 0.55)] {
+    // Signal arcs: purple inside, cyan outside.
+    NSGraphicsContext.saveGraphicsState()
+    glow.set()
+    for (radius, color) in [(215.0, hex(0xA371F7)), (278.0, hex(0x39D0E6, 0.85))] {
         for (start, end) in [(-28.0, 28.0), (152.0, 208.0)] {
             let wave = NSBezierPath()
-            wave.appendArc(withCenter: p(512, 470), radius: radius * s, startAngle: start, endAngle: end)
+            wave.appendArc(withCenter: p(512, 475), radius: radius * s, startAngle: start, endAngle: end)
             wave.lineWidth = 26 * s
             wave.lineCapStyle = .round
-            brass.withAlphaComponent(alpha).setStroke()
+            color.setStroke()
             wave.stroke()
         }
     }
+    NSGraphicsContext.restoreGraphicsState()
+
+    // A thin rim of light on the squircle.
+    hex(0xFFFFFF, 0.14).setStroke()
+    bg.lineWidth = 4 * s
+    bg.stroke()
 
     NSGraphicsContext.restoreGraphicsState()
     return rep.representation(using: .png, properties: [:])!

@@ -31,6 +31,7 @@ struct MenuBarLabel: View {
         } else if count > 0 {
             HStack(spacing: 2) {
                 Image(systemName: "bell.badge.fill")
+                    .symbolEffect(.bounce, value: count)
                 Text("\(count)")
             }
         } else {

@@ -1,6 +1,8 @@
 # Belfry
 
-A small native macOS menu-bar app that rings when something happens on GitHub.
+A small native macOS menu-bar app that rings when something happens on GitHub. It wears a deep-space look of
+its own: a twinkling starfield, nebula glows, glass panels, GitHub's state colours as light sources, and small
+animations that get out of the way when Reduce Motion is on.
 Belfry polls your GitHub notifications and shows each new one as a native macOS
 banner. Clicking a banner opens the pull request, issue or comment in your browser.
 

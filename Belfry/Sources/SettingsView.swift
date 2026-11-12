@@ -20,10 +20,10 @@ struct SettingsView: View {
                         }
                     }
                     Text("The token is stored in your login Keychain. To use a different one, disconnect and paste it in the Belfry menu.")
-                        .font(.caption).foregroundStyle(Theme.secondaryText)
+                        .font(.caption).foregroundStyle(Color.secondary)
                 } else {
                     Text("Not connected. Open the Belfry menu in the menu bar to paste a token.")
-                        .foregroundStyle(Theme.secondaryText)
+                        .foregroundStyle(Color.secondary)
                 }
             }
 
@@ -31,9 +31,9 @@ struct SettingsView: View {
                 LabeledContent("macOS permission") {
                     HStack(spacing: Spacing.item) {
                         switch store.bannersAllowed {
-                        case true?: Label("Allowed", systemImage: "checkmark.circle.fill").foregroundStyle(Theme.goodText)
-                        case false?: Label("Off", systemImage: "bell.slash.fill").foregroundStyle(Theme.badText)
-                        case nil: Text("Not asked yet").foregroundStyle(Theme.secondaryText)
+                        case true?: Label("Allowed", systemImage: "checkmark.circle.fill").foregroundStyle(Color.green)
+                        case false?: Label("Off", systemImage: "bell.slash.fill").foregroundStyle(Color.red)
+                        case nil: Text("Not asked yet").foregroundStyle(Color.secondary)
                         }
                         Button("Notification Settings…") { store.openNotificationSettings() }
                     }
@@ -56,14 +56,14 @@ struct SettingsView: View {
                 Toggle("Group CI runs by branch", isOn: $store.groupCI)
                 Toggle("Mark done when opened", isOn: $store.doneOnOpen)
                 Text("The CI choice applies to the list, the menu-bar count and banners. Hidden runs stay in your GitHub inbox. GitHub may ask Belfry to check less often; it always waits at least that long.")
-                    .font(.caption).foregroundStyle(Theme.secondaryText)
+                    .font(.caption).foregroundStyle(Color.secondary)
             }
 
             Section("General") {
                 Toggle("Open Belfry at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, enabled in setLaunchAtLogin(enabled) }
                 if let loginItemError {
-                    Text(loginItemError).font(.caption).foregroundStyle(Theme.badText)
+                    Text(loginItemError).font(.caption).foregroundStyle(Color.red)
                 }
             }
 
@@ -74,7 +74,7 @@ struct SettingsView: View {
                         Text("Belfry \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")")
                             .fontWeight(.semibold)
                         Text("No analytics. Talks only to api.github.com.")
-                            .font(.caption).foregroundStyle(Theme.secondaryText)
+                            .font(.caption).foregroundStyle(Color.secondary)
                     }
                     Spacer()
                     Link("Source on GitHub", destination: URL(string: "https://github.com/bar-amir/belfry")!)
