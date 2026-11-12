@@ -67,8 +67,14 @@ struct MenuContentView: View {
                     }
                 }
             }
-            .frame(maxHeight: 460)
+            // A ScrollView has no ideal height inside a MenuBarExtra window, so size it explicitly.
+            .frame(height: listHeight)
         }
+    }
+
+    private var listHeight: CGFloat {
+        let estimate = CGFloat(store.threads.count) * 52 + CGFloat(store.groupedByRepo.count) * 24
+        return min(max(estimate, 80), 460)
     }
 
     private var footer: some View {
