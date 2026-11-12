@@ -1,0 +1,38 @@
+name: Belfry
+options:
+  bundleIdPrefix: io.github.baramir
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    DEVELOPMENT_TEAM: ""
+    ENABLE_HARDENED_RUNTIME: NO
+targets:
+  Belfry:
+    type: application
+    platform: macOS
+    sources:
+      - Belfry/Sources
+      - Belfry/Resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.baramir.belfry
+        PRODUCT_NAME: Belfry
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Belfry/Info.plist
+    info:
+      path: Belfry/Info.plist
+      properties:
+        CFBundleDisplayName: Belfry
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.developer-tools
+        LSUIElement: true
+        NSHumanReadableCopyright: "MIT License"
