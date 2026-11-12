@@ -6,17 +6,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     static let threadKey = "threadId"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if let i = CommandLine.arguments.firstIndex(of: "--snapshot"), i + 1 < CommandLine.arguments.count {
+            Snapshot.renderAll(to: URL(fileURLWithPath: CommandLine.arguments[i + 1]))
+            exit(0)
+        }
         if CommandLine.arguments.contains("--dump") {
             Task { await Self.dumpAndExit() }
             return
         }
         let center = UNUserNotificationCenter.current()
         center.delegate = self
-        center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
-            if let error { NSLog("Belfry: notification authorization error: \(error)") }
-            NSLog("Belfry: notifications authorized = \(granted)")
-            Task { @MainActor in NotificationStore.shared.refreshBannerPermission() }
-        }
+        // Permission is requested after the first successful check, when there is something to announce.
+        Task { @MainActor in NotificationStore.shared.refreshBannerPermission() }
         // Pick up changes made in System Settings while Belfry runs.
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification,
                                                object: nil, queue: .main) { _ in

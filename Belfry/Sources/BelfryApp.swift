@@ -10,7 +10,7 @@ struct BelfryApp: App {
             MenuContentView()
                 .environmentObject(store)
         } label: {
-            MenuBarLabel(count: store.unreadCount, hasError: store.lastError != nil)
+            MenuBarLabel(count: store.unreadCount, hasError: !store.hasToken || store.problem == .badToken)
         }
         .menuBarExtraStyle(.window)
 

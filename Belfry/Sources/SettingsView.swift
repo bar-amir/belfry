@@ -3,74 +3,93 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var store: NotificationStore
-    @State private var tokenInput = ""
-    @State private var tokenSaved = Keychain.readToken() != nil
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var loginItemError: String?
+    @State private var confirmDisconnect = false
 
     private let intervals: [Double] = [60, 120, 300, 600, 900]
 
     var body: some View {
         Form {
-            Section("GitHub token") {
-                SecureField(tokenSaved ? "Token saved in Keychain — paste to replace" : "ghp_…", text: $tokenInput)
-                HStack {
-                    Button("Save") {
-                        store.saveToken(tokenInput)
-                        tokenInput = ""
-                        tokenSaved = Keychain.readToken() != nil
+            Section("GitHub account") {
+                if store.hasToken {
+                    LabeledContent("Connected as") {
+                        HStack(spacing: Spacing.item) {
+                            Text(store.login.map { "@\($0)" } ?? "checking…").fontWeight(.semibold)
+                            Button("Disconnect…", role: .destructive) { confirmDisconnect = true }
+                        }
                     }
-                    .disabled(tokenInput.trimmingCharacters(in: .whitespaces).isEmpty)
-                    Button("Remove", role: .destructive) {
-                        Keychain.deleteToken()
-                        tokenSaved = false
-                        store.refreshNow()
-                    }
-                    .disabled(!tokenSaved)
-                    Spacer()
-                    Link("Create a token…",
-                         destination: URL(string: "https://github.com/settings/tokens/new?scopes=notifications,repo&description=Belfry")!)
+                    Text("The token is stored in your login Keychain. To use a different one, disconnect and paste it in the Belfry menu.")
+                        .font(.caption).foregroundStyle(Theme.secondaryText)
+                } else {
+                    Text("Not connected. Open the Belfry menu in the menu bar to paste a token.")
+                        .foregroundStyle(Theme.secondaryText)
                 }
-                Text("Classic token with the notifications and repo scopes. Stored only in your login Keychain.")
-                    .font(.caption).foregroundStyle(.secondary)
             }
 
-            Section("Behaviour") {
-                Picker("Check every", selection: $store.pollIntervalSeconds) {
+            Section("Banners") {
+                LabeledContent("macOS permission") {
+                    HStack(spacing: Spacing.item) {
+                        switch store.bannersAllowed {
+                        case true?: Label("Allowed", systemImage: "checkmark.circle.fill").foregroundStyle(Theme.goodText)
+                        case false?: Label("Off", systemImage: "bell.slash.fill").foregroundStyle(Theme.badText)
+                        case nil: Text("Not asked yet").foregroundStyle(Theme.secondaryText)
+                        }
+                        Button("Notification Settings…") { store.openNotificationSettings() }
+                    }
+                }
+                Toggle("Play a sound", isOn: $store.soundEnabled)
+                LabeledContent("Try it") {
+                    Button("Send Test Banner") { store.sendTestBanner() }
+                }
+            }
+
+            Section("Inbox") {
+                Picker("Check GitHub every", selection: $store.pollIntervalSeconds) {
                     ForEach(intervals, id: \.self) { seconds in
                         Text(seconds < 120 ? "minute" : "\(Int(seconds / 60)) minutes").tag(seconds)
                     }
                 }
-                Text("GitHub's X-Poll-Interval is respected when it asks for a longer wait.")
-                    .font(.caption).foregroundStyle(.secondary)
-                Picker("CI notifications", selection: $store.ciFilter) {
+                Picker("CI runs", selection: $store.ciFilter) {
                     ForEach(CIFilter.allCases) { Text($0.label).tag($0) }
                 }
-                Text("Applies to the list, the unread count and banners. Hidden runs stay unread on GitHub.")
-                    .font(.caption).foregroundStyle(.secondary)
-                Toggle("Play sound with banners", isOn: $store.soundEnabled)
-                Toggle("Launch at login", isOn: $launchAtLogin)
+                Toggle("Group CI runs by branch", isOn: $store.groupCI)
+                Toggle("Mark done when opened", isOn: $store.doneOnOpen)
+                Text("The CI choice applies to the list, the menu-bar count and banners. Hidden runs stay in your GitHub inbox. GitHub may ask Belfry to check less often; it always waits at least that long.")
+                    .font(.caption).foregroundStyle(Theme.secondaryText)
+            }
+
+            Section("General") {
+                Toggle("Open Belfry at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, enabled in setLaunchAtLogin(enabled) }
                 if let loginItemError {
-                    Text(loginItemError).font(.caption).foregroundStyle(.red)
+                    Text(loginItemError).font(.caption).foregroundStyle(Theme.badText)
                 }
+            }
+
+            Section {
                 HStack {
-                    Button("Send test banner") { store.sendTestBanner() }
+                    Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 28, height: 28)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Belfry \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")")
+                            .fontWeight(.semibold)
+                        Text("No analytics. Talks only to api.github.com.")
+                            .font(.caption).foregroundStyle(Theme.secondaryText)
+                    }
                     Spacer()
-                    Button("Notification settings…") { store.openNotificationSettings() }
-                }
-                if store.bannersAllowed == false {
-                    Label("macOS is blocking Belfry's banners. Open Notification settings, turn on "
-                          + "Allow notifications and choose the Banners style.",
-                          systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption).foregroundStyle(.orange)
+                    Link("Source on GitHub", destination: URL(string: "https://github.com/bar-amir/belfry")!)
                 }
             }
         }
         .formStyle(.grouped)
-        .onAppear { store.refreshBannerPermission() }
-        .frame(width: 460)
+        .frame(width: 480)
         .fixedSize(horizontal: false, vertical: true)
+        .onAppear { store.refreshBannerPermission() }
+        .confirmationDialog("Disconnect from GitHub?", isPresented: $confirmDisconnect) {
+            Button("Disconnect", role: .destructive) { store.disconnect() }
+        } message: {
+            Text("Belfry removes the token from your Keychain and stops checking. The token itself stays valid on GitHub.")
+        }
     }
 
     private func setLaunchAtLogin(_ enabled: Bool) {

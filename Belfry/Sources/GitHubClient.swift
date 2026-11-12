@@ -96,10 +96,30 @@ enum GitHubError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .missingToken: return "No GitHub token. Add one in Settings."
-        case .unauthorized: return "GitHub rejected the token (401). Check its scopes."
-        case let .http(code, body): return "GitHub returned \(code): \(body.prefix(140))"
+        case .missingToken: return "Add a GitHub token to start."
+        case .unauthorized: return "Your GitHub token doesn't work anymore. It may have expired or been revoked."
+        case let .http(code, _) where code >= 500: return "GitHub is having trouble right now. Belfry will keep trying."
+        case .http(403, _): return "GitHub refused the request. The token may be missing the notifications scope."
+        case let .http(code, _): return "GitHub answered with an unexpected error (\(code))."
         }
+    }
+}
+
+/// What went wrong on the last check, in the terms the panel shows.
+enum FetchProblem: Equatable {
+    case badToken
+    case offline
+    case other(String)
+
+    init(_ error: Error) {
+        if case GitHubError.unauthorized = error { self = .badToken; return }
+        if let urlError = error as? URLError,
+           [.notConnectedToInternet, .networkConnectionLost, .timedOut, .cannotFindHost, .cannotConnectToHost,
+            .dnsLookupFailed].contains(urlError.code) {
+            self = .offline
+            return
+        }
+        self = .other(error.localizedDescription)
     }
 }
 
@@ -214,6 +234,34 @@ final class GitHubClient {
             e.event == "review_requested" && (e.requested_reviewer?.login == login || e.requested_team != nil)
         }
         return match?.actor?.login
+    }
+
+    /// Marks a thread done: it leaves the inbox until there is new activity.
+    func markDone(threadId: String) async throws {
+        let url = api.appendingPathComponent("notifications/threads/\(threadId)")
+        let (data, response) = try await session.data(for: request(url, method: "DELETE"))
+        _ = try check(response, data)
+    }
+
+    /// Stops notifications for this thread even if you watch the repository.
+    func mute(threadId: String) async throws {
+        var req = request(api.appendingPathComponent("notifications/threads/\(threadId)/subscription"), method: "PUT")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = Data("{\"ignored\":true}".utf8)
+        let (data, response) = try await session.data(for: req)
+        _ = try check(response, data)
+    }
+
+    /// The login the token belongs to, or an error that says why it can't be used.
+    func validate() async throws -> String {
+        struct Me: Decodable { let login: String }
+        let (data, response) = try await session.data(for: request(api.appendingPathComponent("user")))
+        let http = try check(response, data)
+        let scopes = http.value(forHTTPHeaderField: "X-OAuth-Scopes") ?? ""
+        if !scopes.isEmpty, !scopes.contains("notifications"), !scopes.contains("repo") {
+            throw GitHubError.http(403, "missing scope")
+        }
+        return try JSONDecoder().decode(Me.self, from: data).login
     }
 
     func markRead(threadId: String) async throws {

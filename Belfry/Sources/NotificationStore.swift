@@ -1,68 +1,176 @@
+import AppKit
 import Foundation
 import SwiftUI
 import UserNotifications
+
+/// One row in the panel: a single thread, or every CI run for one repository and branch collapsed together.
+struct InboxItem: Identifiable, Equatable {
+    let id: String
+    /// Newest first.
+    let threads: [GitHubThread]
+    var primary: GitHubThread { threads[0] }
+    var count: Int { threads.count }
+    var repo: String { primary.repository.fullName }
+}
+
+/// A Done or Mute that is shown immediately but sent to GitHub only after the undo window closes.
+struct PendingAction: Equatable {
+    enum Kind { case done, mute }
+    let kind: Kind
+    let threadIds: Set<String>
+    let message: String
+}
 
 @MainActor
 final class NotificationStore: ObservableObject {
     static let shared = NotificationStore()
 
-    /// Every unread thread from GitHub; `threads` is what the CI filter lets through.
+    /// Every unread thread from GitHub.
     @Published private(set) var allThreads: [GitHubThread] = []
-    @Published private(set) var lastError: String?
+    @Published private(set) var problem: FetchProblem?
     @Published private(set) var lastChecked: Date?
     @Published private(set) var isRefreshing = false
     @Published private(set) var hasToken = false
+    @Published private(set) var login: String?
     /// nil until checked; false when macOS will not show Belfry's banners.
     @Published private(set) var bannersAllowed: Bool?
-    @Published var selectedTab: ThreadTab = .all
-    @Published var prSubTab: PRSubTab = .all
     /// Open PRs waiting on your review, newest activity first.
     @Published private(set) var reviewRequests: [ReviewRequest] = []
     /// PR URL -> login of whoever asked for the review.
     @Published private(set) var requesters: [String: String] = [:]
     /// Resolved "what happened" per thread, keyed by thread id and valid for one `updated_at`.
     @Published private(set) var details: [String: (updatedAt: String, detail: ThreadDetail)] = [:]
-    private var loadingDetails: Set<String> = []
+    @Published private(set) var pending: PendingAction?
+    @Published var search = ""
+    @Published var selection: String?
 
+    @AppStorage("selectedTab") var selectedTab: ThreadTab = .all
+    @AppStorage("prSubTab") var prSubTab: PRSubTab = .all
     @AppStorage("pollIntervalSeconds") var pollIntervalSeconds: Double = 60
     @AppStorage("soundEnabled") var soundEnabled = true
     @AppStorage("ciFilter") var ciFilter: CIFilter = .all
+    @AppStorage("groupCI") var groupCI = true
+    @AppStorage("doneOnOpen") var doneOnOpen = false
 
-    var threads: [GitHubThread] { allThreads.filter { ciFilter.allows($0) } }
-    var hiddenCount: Int { allThreads.count - threads.count }
-
+    /// How long Done and Mute wait before they reach GitHub, so Undo can take them back.
+    let undoWindow: TimeInterval = 6
     /// Most banners posted in one poll; anything beyond becomes a single summary banner.
     private let maxBannersPerPoll = 8
 
+    private var loadingDetails: Set<String> = []
     private var lastModified: String?
     private var serverPollInterval: TimeInterval = 60
     private var pollTask: Task<Void, Never>?
+    private var commitTask: Task<Void, Never>?
     private var seen: SeenStore
-
-    var unreadCount: Int { threads.count }
-
-    func count(for tab: ThreadTab) -> Int { threads.filter(tab.contains).count }
-
-    func count(for sub: PRSubTab) -> Int {
-        sub == .review ? reviewRequests.count
-            : threads.filter { ThreadTab.pullRequests.contains($0) && sub.contains(detail(for: $0)) }.count
-    }
-
-    private var tabThreads: [GitHubThread] {
-        threads.filter { thread in
-            selectedTab.contains(thread)
-                && (selectedTab != .pullRequests || prSubTab.contains(detail(for: thread)))
-        }
-    }
-
-    var groupedByRepo: [(repo: String, threads: [GitHubThread])] {
-        Dictionary(grouping: tabThreads, by: { $0.repository.fullName })
-            .map { (repo: $0.key, threads: $0.value.sorted { $0.updatedAt > $1.updatedAt }) }
-            .sorted { ($0.threads.first?.updatedAt ?? "") > ($1.threads.first?.updatedAt ?? "") }
-    }
 
     private init() {
         seen = SeenStore.load()
+    }
+
+    // MARK: Derived lists
+
+    /// Threads the CI filter lets through, minus anything waiting in the undo window.
+    var threads: [GitHubThread] {
+        let hidden = pending?.threadIds ?? []
+        return allThreads.filter { ciFilter.allows($0) && !hidden.contains($0.id) }
+    }
+
+    var hiddenByFilter: Int { allThreads.filter { !ciFilter.allows($0) }.count }
+
+    /// Rows for a set of threads, with CI runs collapsed per repository and branch when enabled.
+    func items(from threads: [GitHubThread]) -> [InboxItem] {
+        var singles: [InboxItem] = []
+        var groups: [String: [GitHubThread]] = [:]
+        for thread in threads {
+            if groupCI, thread.isCI {
+                let branch = CIRun(title: thread.subject.title)?.branch ?? thread.subject.title
+                groups["ci:\(thread.repository.fullName):\(branch)", default: []].append(thread)
+            } else {
+                singles.append(InboxItem(id: thread.id, threads: [thread]))
+            }
+        }
+        let collapsed = groups.map { key, value in
+            InboxItem(id: key, threads: value.sorted { $0.updatedAt > $1.updatedAt })
+        }
+        return (singles + collapsed).sorted { $0.primary.updatedAt > $1.primary.updatedAt }
+    }
+
+    /// Rows per tab, after the CI filter and the search text.
+    func count(for tab: ThreadTab) -> Int { items(from: threads.filter { tab.contains($0) && matchesSearch($0) }).count }
+
+    func count(for sub: PRSubTab) -> Int {
+        sub == .review ? visibleReviews.count
+            : threads.filter {
+                ThreadTab.pullRequests.contains($0) && sub.contains(detail(for: $0)) && matchesSearch($0)
+            }.count
+    }
+
+    /// The menu-bar number: rows in All after the CI filter. Search never changes it.
+    var unreadCount: Int { items(from: threads).count }
+
+    private func matchesSearch(_ thread: GitHubThread) -> Bool {
+        let query = search.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !query.isEmpty else { return true }
+        let haystack = [thread.subject.title, thread.repository.fullName, thread.reasonLabel,
+                        detail(for: thread)?.summary ?? "", detail(for: thread)?.number.map { "#\($0)" } ?? ""]
+            .joined(separator: " ").lowercased()
+        return query.split(separator: " ").allSatisfy { haystack.contains($0) }
+    }
+
+    /// Rows in the current tab, sub-tab and search.
+    var visibleItems: [InboxItem] {
+        items(from: threads.filter { thread in
+            selectedTab.contains(thread)
+                && (selectedTab != .pullRequests || prSubTab.contains(detail(for: thread)))
+                && matchesSearch(thread)
+        })
+    }
+
+    var groupedByRepo: [(repo: String, items: [InboxItem])] {
+        var order: [String] = []
+        var groups: [String: [InboxItem]] = [:]
+        for item in visibleItems {
+            if groups[item.repo] == nil { order.append(item.repo) }
+            groups[item.repo, default: []].append(item)
+        }
+        return order.map { ($0, groups[$0]!) }
+    }
+
+    /// Rows in display order, for keyboard movement.
+    var flatVisibleItems: [InboxItem] { groupedByRepo.flatMap(\.items) }
+
+    var visibleReviews: [ReviewRequest] {
+        let query = search.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !query.isEmpty else { return reviewRequests }
+        return reviewRequests.filter { "\($0.title) \($0.repoFullName) #\($0.number)".lowercased().contains(query) }
+    }
+
+    var showingReviews: Bool { selectedTab == .pullRequests && prSubTab == .review }
+
+    // MARK: Snapshot fixtures
+
+    /// Puts the store into a fixed state for `--snapshot` renders. Never called in normal use.
+    func applyFixture(threads: [GitHubThread], details: [String: ThreadDetail], reviews: [ReviewRequest],
+                      requesters: [String: String], problem: FetchProblem? = nil, hasToken: Bool = true,
+                      bannersAllowed: Bool? = true, checked: Date? = Date(), refreshing: Bool = false,
+                      pending: PendingAction? = nil, selection: String? = nil, search: String = "") {
+        allThreads = threads
+        self.details = details.reduce(into: [:]) { result, item in
+            let updated = threads.first { $0.id == item.key }?.updatedAt ?? ""
+            result[item.key] = (updated, item.value)
+        }
+        reviewRequests = reviews
+        self.requesters = requesters
+        self.problem = problem
+        self.hasToken = hasToken
+        self.bannersAllowed = bannersAllowed
+        lastChecked = checked
+        isRefreshing = refreshing
+        self.pending = pending
+        self.selection = selection
+        self.search = search
+        login = hasToken ? "you" : nil
     }
 
     // MARK: Token
@@ -72,11 +180,30 @@ final class NotificationStore: ObservableObject {
         Keychain.readToken() ?? ProcessInfo.processInfo.environment["BELFRY_GITHUB_TOKEN"]
     }
 
-    func saveToken(_ token: String) {
+    /// Checks the token with GitHub before storing it. Returns an error message, or nil on success.
+    func connect(token raw: String) async -> String? {
+        let token = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else { return "Paste a token first." }
+        do {
+            login = try await GitHubClient(token: token).validate()
+        } catch {
+            if case GitHubError.unauthorized = error { return "GitHub didn't accept that token. Check you copied all of it." }
+            return error.localizedDescription
+        }
         Keychain.saveToken(token)
         lastModified = nil
+        problem = nil
+        refreshNow()
+        return nil
+    }
+
+    func disconnect() {
+        Keychain.deleteToken()
+        login = nil
         refreshNow()
     }
+
+    static let newTokenURL = URL(string: "https://github.com/settings/tokens/new?scopes=notifications,repo&description=Belfry")!
 
     // MARK: Polling
 
@@ -102,7 +229,8 @@ final class NotificationStore: ObservableObject {
         guard let token = currentToken() else {
             hasToken = false
             allThreads = []
-            lastError = GitHubError.missingToken.errorDescription
+            reviewRequests = []
+            problem = nil
             return
         }
         hasToken = true
@@ -110,19 +238,21 @@ final class NotificationStore: ObservableObject {
         defer { isRefreshing = false }
 
         let client = GitHubClient(token: token)
+        if login == nil { login = await client.viewerLogin() }
         let announcedReviews = await pollReviewRequests(client: client)
         do {
             let result = try await client.fetchNotifications(ifModifiedSince: lastModified)
             if let interval = result.pollInterval { serverPollInterval = interval }
             lastModified = result.lastModified
             lastChecked = Date()
-            lastError = nil
+            problem = nil
             if let fresh = result.threads { // nil on 304: nothing changed
                 allThreads = fresh.filter(\.unread)
                 await notifyNew(allThreads, client: client, skipping: announcedReviews)
             }
+            requestBannerPermissionIfNeeded()
         } catch {
-            lastError = error.localizedDescription
+            problem = FetchProblem(error)
         }
         // PR sub-tabs sort by review state, so resolve every PR thread up front. This also runs after a 304,
         // which retries any lookup that failed earlier (failed PR lookups are not cached).
@@ -130,6 +260,19 @@ final class NotificationStore: ObservableObject {
     }
 
     // MARK: Banners
+
+    /// Asks for notification permission once there is something worth announcing, not at launch.
+    private func requestBannerPermissionIfNeeded() {
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            guard settings.authorizationStatus == .notDetermined else {
+                Task { @MainActor in self.refreshBannerPermission() }
+                return
+            }
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in
+                Task { @MainActor in self.refreshBannerPermission() }
+            }
+        }
+    }
 
     /// Refreshes the review list and announces PRs that newly need your review.
     /// Returns the PR URLs announced, so the matching notification thread isn't announced twice.
@@ -140,7 +283,6 @@ final class NotificationStore: ObservableObject {
             return []
         }
         reviewRequests = current
-        let login = await client.viewerLogin()
         for pr in current where requesters[pr.id] == nil {
             if let who = await client.requester(for: pr, login: login) { requesters[pr.id] = who }
         }
@@ -167,10 +309,6 @@ final class NotificationStore: ObservableObject {
         if soundEnabled { content.sound = .default }
         UNUserNotificationCenter.current().add(
             UNNotificationRequest(identifier: "review-\(pr.id)", content: content, trigger: nil))
-    }
-
-    func open(_ pr: ReviewRequest) {
-        if let url = URL(string: pr.htmlURL) { NSWorkspace.shared.open(url) }
     }
 
     private func notifyNew(_ threads: [GitHubThread], client: GitHubClient, skipping announcedReviews: Set<String>) async {
@@ -229,7 +367,8 @@ final class NotificationStore: ObservableObject {
         UNUserNotificationCenter.current().getNotificationSettings { settings in
             let allowed = settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional
             let styleOK = settings.alertStyle != .none
-            Task { @MainActor in self.bannersAllowed = allowed && styleOK }
+            let undecided = settings.authorizationStatus == .notDetermined
+            Task { @MainActor in self.bannersAllowed = undecided ? nil : (allowed && styleOK) }
         }
     }
 
@@ -241,7 +380,7 @@ final class NotificationStore: ObservableObject {
     }
 
     func sendTestBanner() {
-        refreshBannerPermission()
+        requestBannerPermissionIfNeeded()
         let content = UNMutableNotificationContent()
         content.title = "Belfry is ringing"
         content.subtitle = "Test notification"
@@ -260,7 +399,7 @@ final class NotificationStore: ObservableObject {
         }
     }
 
-    // MARK: Actions
+    // MARK: Details
 
     func detail(for thread: GitHubThread) -> ThreadDetail? {
         guard let cached = details[thread.id], cached.updatedAt == thread.updatedAt else { return nil }
@@ -281,36 +420,119 @@ final class NotificationStore: ObservableObject {
         }
     }
 
-    func open(_ thread: GitHubThread) {
-        if let cached = detail(for: thread) {
+    // MARK: Actions
+
+    func open(_ item: InboxItem) {
+        let thread = item.primary
+        if thread.isCI, let run = CIRun(title: thread.subject.title),
+           var c = URLComponents(string: thread.repository.htmlURL + "/actions") {
+            c.queryItems = [URLQueryItem(name: "query", value: "branch:\(run.branch)")]
+            if let url = c.url { NSWorkspace.shared.open(url) }
+        } else if let cached = detail(for: thread) {
             NSWorkspace.shared.open(cached.url)
+        } else if let token = currentToken() {
+            Task { NSWorkspace.shared.open(await GitHubClient(token: token).htmlURL(for: thread)) }
+        }
+        if doneOnOpen { markDone([item]) }
+    }
+
+    func open(_ pr: ReviewRequest) {
+        if let url = URL(string: pr.htmlURL) { NSWorkspace.shared.open(url) }
+    }
+
+    func copyLink(_ item: InboxItem) {
+        let url = detail(for: item.primary)?.url.absoluteString ?? item.primary.repository.htmlURL
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(url, forType: .string)
+    }
+
+    func markDone(_ items: [InboxItem], label: String? = nil) {
+        stage(.done, items, message: label ?? Self.describe(items, verb: "Marked", suffix: "done"))
+    }
+
+    func mute(_ items: [InboxItem]) {
+        stage(.mute, items, message: Self.describe(items, verb: "Muted", suffix: ""))
+    }
+
+    func doneAllVisible() {
+        let items = flatVisibleItems
+        markDone(items, label: "Marked \(items.reduce(0) { $0 + $1.count }) done")
+    }
+
+    func doneAll(inRepo repo: String) {
+        let items = flatVisibleItems.filter { $0.repo == repo }
+        markDone(items, label: "Marked \(repo) done")
+    }
+
+    private static func describe(_ items: [InboxItem], verb: String, suffix: String) -> String {
+        let total = items.reduce(0) { $0 + $1.count }
+        let what = items.count == 1 ? "“\(items[0].primary.displayTitle)”" : "\(total) notifications"
+        return [verb, what, suffix].filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
+    /// Hides the threads now and sends the change after the undo window. A second action commits the first.
+    private func stage(_ kind: PendingAction.Kind, _ items: [InboxItem], message: String) {
+        let ids = Set(items.flatMap { $0.threads.map(\.id) })
+        guard !ids.isEmpty else { return }
+        commitPending()
+        advanceSelection(past: Set(items.map(\.id)))
+        pending = PendingAction(kind: kind, threadIds: ids, message: message)
+        let window = undoWindow
+        commitTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(window * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            self?.commitPending()
+        }
+    }
+
+    func undo() {
+        commitTask?.cancel()
+        commitTask = nil
+        pending = nil
+    }
+
+    /// Sends the staged action to GitHub now.
+    func commitPending() {
+        commitTask?.cancel()
+        commitTask = nil
+        guard let action = pending, let token = currentToken() else { pending = nil; return }
+        pending = nil
+        allThreads.removeAll { action.threadIds.contains($0.id) }
+        lastModified = nil
+        Task {
+            let client = GitHubClient(token: token)
+            for id in action.threadIds {
+                do {
+                    if action.kind == .mute { try await client.mute(threadId: id) }
+                    try await client.markDone(threadId: id)
+                } catch {
+                    NSLog("Belfry: \(action.kind) failed for \(id): \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    // MARK: Keyboard selection
+
+    func moveSelection(by step: Int) {
+        let ids = showingReviews ? visibleReviews.map(\.id) : flatVisibleItems.map(\.id)
+        guard !ids.isEmpty else { selection = nil; return }
+        guard let current = selection, let index = ids.firstIndex(of: current) else {
+            selection = step > 0 ? ids.first : ids.last
             return
         }
-        guard let token = currentToken() else { return }
-        Task {
-            let url = await GitHubClient(token: token).htmlURL(for: thread)
-            NSWorkspace.shared.open(url)
-        }
+        selection = ids[max(0, min(ids.count - 1, index + step))]
     }
 
-    func markRead(_ thread: GitHubThread) {
-        guard let token = currentToken() else { return }
-        allThreads.removeAll { $0.id == thread.id }
-        lastModified = nil
-        Task {
-            do { try await GitHubClient(token: token).markRead(threadId: thread.id) }
-            catch { lastError = error.localizedDescription; refreshNow() }
-        }
-    }
+    var selectedItem: InboxItem? { flatVisibleItems.first { $0.id == selection } }
 
-    func markAllRead() {
-        guard let token = currentToken() else { return }
-        allThreads = []
-        lastModified = nil
-        Task {
-            do { try await GitHubClient(token: token).markAllRead() }
-            catch { lastError = error.localizedDescription; refreshNow() }
-        }
+    /// Keeps a selection after the selected rows disappear, so keyboard triage can continue.
+    private func advanceSelection(past removed: Set<String>) {
+        guard let current = selection, removed.contains(current) else { return }
+        let ids = flatVisibleItems.map(\.id)
+        guard let index = ids.firstIndex(of: current) else { return }
+        selection = ids[(index + 1)...].first { !removed.contains($0) }
+            ?? ids[..<index].last { !removed.contains($0) }
     }
 }
 

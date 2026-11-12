@@ -4,24 +4,19 @@ A small native macOS menu-bar app that rings when something happens on GitHub.
 Belfry polls your GitHub notifications and shows each new one as a native macOS
 banner. Clicking a banner opens the pull request, issue or comment in your browser.
 
-- Menu-bar bell with your unread count
-- Dropdown with tabs by type (All, Review, PRs, Issues, CI, Other) and unread items
-  grouped by repository. Click to open, ✓ to mark read, or "Mark all read"
-- Review tab: every open PR waiting on your review (GitHub search
-  `review-requested:@me`, so it stays right after you read the notification),
-  with who asked. A banner like "@sam asked for your review" fires as soon as a
-  new PR lands there
-- CI filter: show all CI runs, failures only, or none. It applies to the list,
-  the count and the banners
-- Every banner and row says what actually happened, not just GitHub's reason
-  code: "@sam approved: looks good", "@kim commented: …", "Merged by @lee",
-  "✗ Failed on feat/x" (CI rows link to that branch's runs)
-- Polls with `If-Modified-Since`, so an unchanged inbox costs a cheap `304`,
-  and it waits at least as long as GitHub's `X-Poll-Interval` asks
-- Never announces the same activity twice. The last-seen `updated_at` per
-  thread is kept in `~/Library/Application Support/Belfry/seen-threads.json`
-- Settings for the token (stored in the Keychain), poll interval, sound, and
-  launch at login
+- **Banners that say what happened.** "@sam approved: looks good", "@kim commented: …", "Merged by @lee",
+  "✗ 3 of 3 runs failed · CI, Lint". Clicking a banner opens the exact PR, review or comment.
+- **An inbox in the menu bar**, grouped by repository, with tabs for All, PRs, Issues and CI. PRs have
+  sub-tabs: Review (every open PR waiting on you, from `review-requested:@me`), Comments, Approved, Changes
+  and Merged/Closed.
+- **Triage like mail.** Use ↑↓ to move, ↵ to open, E to mark done and M to mute the thread, or ⌘F to filter.
+  Right-click a row for more. "Done with N" clears what you're looking at, and every Done or Mute waits six
+  seconds so you can undo it (⌘Z).
+- **CI without the noise.** Runs collapse into one row per repo and branch. Choose all runs, failures only or
+  none; the choice applies to the list, the count and the banners.
+- **Careful with your attention and data.** Belfry announces each piece of activity once, asks for notification
+  permission only after the first successful check, polls with `If-Modified-Since` and respects GitHub's
+  `X-Poll-Interval`. The token stays in the Keychain, and Belfry talks only to api.github.com.
 
 Requires macOS 14 or later. Written in Swift and SwiftUI with no third-party
 dependencies.
@@ -63,7 +58,8 @@ from the last 24 hours and quietly marks everything older as seen.
    (Settings → Developer settings → Personal access tokens → Tokens (classic)).
 2. Keep the `notifications` and `repo` scopes. `repo` is needed to resolve
    private pull requests and issues to their web URLs. Pick an expiry.
-3. Generate the token, open Belfry → Settings…, paste it and click **Save**.
+3. Generate the token, open the Belfry menu, paste it and click **Connect**. Belfry checks it with GitHub
+   before saving it.
 
 The token is stored only in your login Keychain, under the service
 `io.github.baramir.belfry`. It never touches the repository or a config file.
@@ -81,6 +77,14 @@ To see what Belfry resolves for your current notifications without the UI:
 BELFRY_GITHUB_TOKEN="$(gh auth token)" build/Build/Products/Release/Belfry.app/Contents/MacOS/Belfry --dump
 ```
 
+To render every screen and state to PNGs in light and dark mode, from fictional data (for design review):
+
+```bash
+build/Build/Products/Release/Belfry.app/Contents/MacOS/Belfry --snapshot /tmp/belfry-snapshots
+```
+
+See [docs/research.md](docs/research.md) for how Belfry compares with other clients and what's next.
+
 ## A note on your own activity
 
 GitHub doesn't notify you about your own actions. If scripts, bots or agents
@@ -94,9 +98,12 @@ project.yml                 XcodeGen spec (the .xcodeproj is generated, not comm
 Belfry/Sources/
   BelfryApp.swift           MenuBarExtra + Settings scenes
   AppDelegate.swift         notification permission, banner click → open URL
-  NotificationStore.swift   polling loop, dedupe store, banners, actions
+  NotificationStore.swift   polling, inbox items, banners, Done/Mute with undo, keyboard selection
+  Theme.swift               colour tokens, spacing scale, button and chip styles
+  TokenEntryView.swift      first-run setup and token repair inside the panel
+  Snapshot.swift            --snapshot renderer and fixtures
   GitHubClient.swift        REST calls, Last-Modified/Link handling, html URL resolution
-  MenuContentView.swift     dropdown UI
+  MenuContentView.swift     the panel: header, search, tabs, rows, footer
   SettingsView.swift        token, interval, sound, launch at login
   Keychain.swift            token storage
 scripts/make-icon.swift     draws the app icon into the asset catalog
