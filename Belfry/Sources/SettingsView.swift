@@ -6,6 +6,7 @@ struct SettingsView: View {
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var loginItemError: String?
     @State private var confirmDisconnect = false
+    @AppStorage("animatedSky") private var animatedSky = true
 
     private let intervals: [Double] = [60, 120, 300, 600, 900]
 
@@ -60,6 +61,7 @@ struct SettingsView: View {
             }
 
             Section("General") {
+                Toggle("Animated sky", isOn: $animatedSky)
                 Toggle("Open Belfry at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, enabled in setLaunchAtLogin(enabled) }
                 if let loginItemError {

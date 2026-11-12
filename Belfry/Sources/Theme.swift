@@ -31,8 +31,12 @@ enum Theme {
                                           startPoint: .topLeading, endPoint: .bottomTrailing)
 }
 
+/// One rhythm for the panel. Everything outside a card sits on `gutter`; everything inside one on `cardInset`.
 enum Spacing {
-    static let gutter: CGFloat = 14
+    /// Outer margin: header, search, tabs, cards and the floating footer all start and end here.
+    static let gutter: CGFloat = 16
+    /// Inside a card: rows and the card header.
+    static let cardInset: CGFloat = 14
     static let bar: CGFloat = 12
     static let section: CGFloat = 14
     static let inner: CGFloat = 10
@@ -117,6 +121,7 @@ extension View {
 struct SpaceBackground: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.frozenTime) private var frozenTime
+    @AppStorage("animatedSky") private var animatedSky = true
 
     var body: some View {
         ZStack {
@@ -127,7 +132,7 @@ struct SpaceBackground: View {
                            startRadius: 0, endRadius: 280)
             if let frozenTime {
                 StarField(time: frozenTime)
-            } else if reduceMotion {
+            } else if reduceMotion || !animatedSky {
                 StarField(time: 0)
             } else {
                 TimelineView(.animation(minimumInterval: 1 / 20)) { context in

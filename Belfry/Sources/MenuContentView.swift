@@ -34,7 +34,13 @@ struct MenuContentView: View {
                     content
                 }
             }
-            if inList { footer.padding(10) }
+            if inList {
+                // Content fades into the sky as it slides under the floating footer.
+                LinearGradient(colors: [Theme.canvas.opacity(0), Theme.canvas.opacity(0.85)], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 86)
+                    .allowsHitTesting(false)
+                footer.padding(.horizontal, Spacing.gutter).padding(.bottom, 12)
+            }
         }
         .frame(width: panelWidth)
         .background(SpaceBackground())
@@ -101,7 +107,8 @@ struct MenuContentView: View {
             moreMenu
         }
         .padding(.horizontal, Spacing.gutter)
-        .padding(.vertical, Spacing.bar)
+        .padding(.top, 14)
+        .padding(.bottom, 12)
     }
 
     private var statusLine: String {
@@ -152,12 +159,12 @@ struct MenuContentView: View {
         VStack(alignment: .leading, spacing: 0) {
             searchField
                 .padding(.horizontal, Spacing.gutter)
-                .padding(.bottom, 8)
+                .padding(.bottom, 10)
             underlineNav
             if store.selectedTab == .pullRequests {
                 prFilters
                     .padding(.horizontal, Spacing.gutter)
-                    .padding(.top, 10)
+                    .padding(.top, 12)
                     .transition(.opacity.combined(with: .offset(y: -6)))
             }
         }
@@ -233,7 +240,8 @@ struct MenuContentView: View {
             Spacer(minLength: 0)
             ciFilterMenu
         }
-        .padding(.horizontal, Spacing.gutter - 6)
+        .padding(.leading, Spacing.gutter - 8)
+        .padding(.trailing, Spacing.gutter)
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.hairline).frame(height: 1) }
     }
 
@@ -261,8 +269,8 @@ struct MenuContentView: View {
                                 .contentTransition(.numericText(value: Double(n)))
                         }
                     }
-                    .padding(.horizontal, 10)
-                    .frame(height: 26)
+                    .padding(.horizontal, 11)
+                    .frame(height: 28)
                     .background {
                         if selected {
                             Capsule().fill(Theme.accent.opacity(0.14))
@@ -276,7 +284,8 @@ struct MenuContentView: View {
                 }
                 .buttonStyle(.plain)
                 .fixedSize()
-                .help(sub == .closed ? "Merged or closed" : "")
+                .help(sub == .closed ? "Merged or closed"
+                      : sub == .review ? "Every open pull request waiting on your review, from GitHub search. It can include PRs with no unread notification." : "")
                 .accessibilityAddTraits(selected ? .isSelected : [])
             }
             Spacer(minLength: 0)
@@ -298,8 +307,8 @@ struct MenuContentView: View {
             }
             .font(.system(size: 11.5, weight: .semibold))
             .foregroundStyle(store.ciFilter == .all ? Theme.secondaryText : Theme.accent)
-            .padding(.horizontal, 10)
-            .frame(height: 26)
+            .padding(.horizontal, 11)
+            .frame(height: 28)
             .liquidGlass(Capsule(), tint: store.ciFilter == .all ? nil : Theme.accent.opacity(0.3), interactive: true)
             .contentShape(Capsule())
         }
@@ -330,7 +339,8 @@ struct MenuContentView: View {
                             }
                         }
                         .card()
-                        .padding(Spacing.gutter)
+                        .padding(.horizontal, Spacing.gutter)
+                        .padding(.top, 14)
                         .padding(.bottom, footerClearance)
                     }
                 }
@@ -344,7 +354,8 @@ struct MenuContentView: View {
                                 .transition(.opacity.combined(with: .scale(scale: 0.97)))
                         }
                     }
-                    .padding(Spacing.gutter)
+                    .padding(.horizontal, Spacing.gutter)
+                    .padding(.top, 14)
                     .padding(.bottom, footerClearance)
                     .animation(spring, value: store.flatVisibleItems.map(\.id))
                 }
@@ -463,8 +474,8 @@ struct FooterBar: View {
                 .transition(.opacity)
             }
         }
-        .padding(.horizontal, 12)
-        .frame(height: 48)
+        .padding(.horizontal, 14)
+        .frame(height: 50)
         .liquidGlass(RoundedRectangle(cornerRadius: 18), tint: pending == nil ? nil : Theme.open.opacity(0.25))
         .shadow(color: .black.opacity(0.35), radius: 14, y: 6)
     }
@@ -547,7 +558,7 @@ struct ExitEffect: ViewModifier, Animatable {
             }
             .overlay(alignment: .trailing) {
                 if phase > 0 {
-                    ActionMark(kind: kind, progress: mark).padding(.trailing, 18).opacity(1 - leave)
+                    ActionMark(kind: kind, progress: mark).padding(.trailing, Spacing.cardInset + 6).opacity(1 - leave)
                 }
             }
             .offset(x: 80 * leave * leave)
@@ -677,14 +688,14 @@ struct StateIcon: View {
         Image(systemName: style.symbol)
             .font(.system(size: 14, weight: .semibold))
             .foregroundStyle(style.color)
-            .symbolEffect(.pulse, options: .repeating, isActive: style.pulse && !reduceMotion && !snapshotMode)
+            .symbolEffect(.pulse, options: .repeat(3), isActive: style.pulse && !reduceMotion && !snapshotMode)
             .frame(width: 20, height: 20)
             .accessibilityHidden(true)
     }
 }
 
 struct RowDivider: View {
-    var body: some View { Rectangle().fill(Theme.hairline).frame(height: 1).padding(.leading, 42) }
+    var body: some View { Rectangle().fill(Theme.hairline).frame(height: 1).padding(.leading, Spacing.cardInset + 32) }
 }
 
 /// One repository: a quiet card with a header and its rows.
@@ -708,12 +719,12 @@ struct RepoBox: View {
                 Button { store.requestExit(.done, items, label: "Marked \(repo) done", animated: !reduceMotion) } label: {
                     Image(systemName: "checkmark")
                 }
-                .buttonStyle(IconButtonStyle(size: 24, tint: hovering ? Theme.text : Theme.tertiaryText))
+                .buttonStyle(IconButtonStyle(size: 28, tint: hovering ? Theme.text : Theme.secondaryText))
                 .help("Mark everything in \(repo) done")
                 .accessibilityLabel("Mark everything in \(repo) done")
             }
-            .padding(.horizontal, 12)
-            .frame(height: 38)
+            .padding(.horizontal, Spacing.cardInset)
+            .frame(height: 40)
             Rectangle().fill(Theme.hairline).frame(height: 1)
             ForEach(items) { item in
                 ItemRow(item: item, selected: store.selection == item.id,
@@ -776,9 +787,9 @@ struct ItemRow: View {
 
     var body: some View {
         let style = RowStyle.of(item, detail: detail)
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: 12) {
             StateIcon(style: style)
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 5) {
                 Text(title)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Theme.text)
@@ -814,13 +825,13 @@ struct ItemRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .overlay(alignment: .topTrailing) { if !isExiting { trailing } }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, Spacing.cardInset)
+        .padding(.vertical, 12)
         .background(
             ZStack(alignment: .leading) {
                 if selected {
                     Theme.accent.opacity(0.09)
-                    Capsule().fill(Theme.accent).frame(width: 2.5).padding(.vertical, 8).glow(Theme.accent, radius: 3)
+                    Capsule().fill(Theme.accent).frame(width: 2.5).padding(.vertical, 10).glow(Theme.accent, radius: 3)
                         .transition(.scale(scale: 0.2, anchor: .center).combined(with: .opacity))
                 } else if hovering {
                     Color.white.opacity(0.04)
@@ -878,13 +889,13 @@ struct ItemRow: View {
                 Button { store.requestExit(.done, [item], animated: !reduceMotion) } label: {
                     Image(systemName: "checkmark")
                 }
-                .buttonStyle(IconButtonStyle(size: 26, tint: Theme.open))
+                .buttonStyle(IconButtonStyle(size: 28, tint: Theme.open))
                 .help("Mark done (E)")
                 .accessibilityLabel("Mark done")
                 Button { store.requestExit(.mute, [item], animated: !reduceMotion) } label: {
                     Image(systemName: "bell.slash")
                 }
-                .buttonStyle(IconButtonStyle(size: 26))
+                .buttonStyle(IconButtonStyle(size: 28))
                 .help("Mute this thread (M)")
                 .accessibilityLabel("Mute")
             }
@@ -922,10 +933,10 @@ struct ReviewRow: View {
 
     var body: some View {
         let requester = store.requesters[pr.id]
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: 12) {
             StateIcon(style: RowStyle(symbol: "arrow.triangle.pull", color: Theme.open, reason: "Review requested",
                                       reasonColor: Theme.accent, pulse: true))
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 5) {
                 Text(pr.title)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Theme.text)
@@ -956,13 +967,13 @@ struct ReviewRow: View {
                 .foregroundStyle(Theme.secondaryText)
                 .padding(.top, 2)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, Spacing.cardInset)
+        .padding(.vertical, 12)
         .background(
             ZStack(alignment: .leading) {
                 if selected {
                     Theme.accent.opacity(0.09)
-                    Capsule().fill(Theme.accent).frame(width: 2.5).padding(.vertical, 8)
+                    Capsule().fill(Theme.accent).frame(width: 2.5).padding(.vertical, 10)
                 } else if hovering {
                     Color.white.opacity(0.04)
                 }
@@ -1102,12 +1113,14 @@ struct ShimmerRows: View {
                         ShimmerBar(width: 120, height: 9)
                     }
                 }
-                .padding(12)
+                .padding(.horizontal, Spacing.cardInset)
+                .padding(.vertical, 12)
                 if index < 2 { RowDivider() }
             }
         }
         .card()
-        .padding(Spacing.gutter)
+        .padding(.horizontal, Spacing.gutter)
+        .padding(.top, 14)
         .padding(.bottom, footerClearance)
         .accessibilityElement()
         .accessibilityLabel("Checking GitHub")
