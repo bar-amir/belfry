@@ -6,6 +6,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     static let threadKey = "threadId"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if let i = CommandLine.arguments.firstIndex(of: "--animations"), i + 1 < CommandLine.arguments.count {
+            AnimationFrames.renderAll(to: URL(fileURLWithPath: CommandLine.arguments[i + 1]))
+            exit(0)
+        }
         if let i = CommandLine.arguments.firstIndex(of: "--snapshot"), i + 1 < CommandLine.arguments.count {
             Snapshot.renderAll(to: URL(fileURLWithPath: CommandLine.arguments[i + 1]))
             exit(0)

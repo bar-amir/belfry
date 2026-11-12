@@ -13,6 +13,9 @@ struct InboxItem: Identifiable, Equatable {
     var repo: String { primary.repository.fullName }
 }
 
+/// How a row leaves the list.
+enum ExitKind: Equatable { case done, mute }
+
 /// A Done or Mute that is shown immediately but sent to GitHub only after the undo window closes.
 struct PendingAction: Equatable {
     enum Kind { case done, mute }
@@ -41,6 +44,9 @@ final class NotificationStore: ObservableObject {
     /// Resolved "what happened" per thread, keyed by thread id and valid for one `updated_at`.
     @Published private(set) var details: [String: (updatedAt: String, detail: ThreadDetail)] = [:]
     @Published private(set) var pending: PendingAction?
+    /// Rows playing their exit animation, and when each starts (for the cascade in Done with N).
+    @Published private(set) var exiting: [String: ExitKind] = [:]
+    private(set) var exitDelay: [String: Double] = [:]
     @Published var search = ""
     @Published var selection: String?
 
@@ -446,6 +452,30 @@ final class NotificationStore: ObservableObject {
         NSPasteboard.general.setString(url, forType: .string)
     }
 
+    /// Plays the exit animation, then marks the rows done or muted in one undoable action.
+    func requestExit(_ kind: ExitKind, _ items: [InboxItem], label: String? = nil, animated: Bool) {
+        let items = items.filter { exiting[$0.id] == nil }
+        guard !items.isEmpty else { return }
+        guard animated else {
+            if kind == .done { markDone(items, label: label) } else { mute(items) }
+            return
+        }
+        let stagger = 0.045
+        for (index, item) in items.enumerated() {
+            exitDelay[item.id] = Double(min(index, 12)) * stagger
+            exiting[item.id] = kind
+        }
+        let total = 0.62 + Double(min(items.count - 1, 12)) * stagger
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(total * 1_000_000_000))
+            guard let self else { return }
+            withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) {
+                for item in items { self.exiting[item.id] = nil }
+                if kind == .done { self.markDone(items, label: label) } else { self.mute(items) }
+            }
+        }
+    }
+
     func markDone(_ items: [InboxItem], label: String? = nil) {
         stage(.done, items, message: label ?? Self.describe(items, verb: "Marked", suffix: "done"))
     }
@@ -639,7 +669,7 @@ enum PRSubTab: String, CaseIterable, Identifiable {
         case .comments: return "Comments"
         case .approved: return "Approved"
         case .changesRequested: return "Changes"
-        case .closed: return "Merged/Closed"
+        case .closed: return "Closed"
         }
     }
 

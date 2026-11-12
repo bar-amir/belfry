@@ -18,8 +18,7 @@ struct TokenEntryView: View {
                 OrbitView(size: 70)
                 Text(kind == .welcome ? "Belfry" : "Reconnect Belfry")
                     .font(.system(size: 24, weight: .heavy, design: .rounded))
-                    .foregroundStyle(Theme.auroraDiagonal)
-                    .glow(Color(hex: "#6E7BFF"), radius: 10)
+                    .foregroundStyle(Theme.starlight)
                 Text(kind == .welcome
                      ? "GitHub notifications as Mac banners, with what actually happened: who approved, who commented, which build failed."
                      : "Your GitHub token stopped working. It may have expired or been revoked. Make a new one and paste it below; nothing else changes.")
@@ -49,13 +48,13 @@ struct TokenEntryView: View {
                         .background(RoundedRectangle(cornerRadius: 8).fill(Color(hex: "#05080F").opacity(0.85)))
                         .overlay(RoundedRectangle(cornerRadius: 8).stroke(
                             error != nil ? AnyShapeStyle(Theme.danger)
-                                : (fieldFocused ? AnyShapeStyle(Theme.aurora) : AnyShapeStyle(Theme.hairlineStrong)),
+                                : (fieldFocused ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Theme.hairlineStrong)),
                             lineWidth: fieldFocused || error != nil ? 1.5 : 1))
                         .offset(x: shake)
                         .accessibilityLabel("GitHub token")
                         .onSubmit(connect)
                     Button(action: connect) {
-                        if checking { ProgressView().controlSize(.small).tint(.white) } else { Text("Connect") }
+                        if checking { ProgressView().controlSize(.small).tint(Theme.onMoon) } else { Text("Connect") }
                     }
                     .buttonStyle(PrimaryButtonStyle(height: 32))
                     .disabled(checking || token.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -71,7 +70,7 @@ struct TokenEntryView: View {
                 }
             }
             .padding(14)
-            .glass(cornerRadius: 12)
+            .card()
 
             Label("The token stays in your Mac's Keychain. Belfry only talks to api.github.com.", systemImage: "lock.fill")
                 .font(.system(size: 11.5))
@@ -87,10 +86,9 @@ struct TokenEntryView: View {
         HStack(alignment: .top, spacing: 10) {
             Text("\(n)")
                 .font(.system(size: 11.5, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
+                .foregroundStyle(Theme.onMoon)
                 .frame(width: 22, height: 22)
-                .background(Circle().fill(Theme.auroraDiagonal))
-                .glow(Theme.accent, radius: 4)
+                .background(Circle().fill(Theme.moon))
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.text)
                 if let caption {

@@ -23,7 +23,7 @@ func render(size: CGFloat) -> Data {
 
     // Deep-space squircle with nebula glows.
     let bg = NSBezierPath(roundedRect: r(100, 100, 824, 824), xRadius: 185 * s, yRadius: 185 * s)
-    NSGradient(colors: [hex(0x1A1240), hex(0x070B14)])!.draw(in: bg, relativeCenterPosition: NSPoint(x: -0.2, y: 0.5))
+    NSGradient(colors: [hex(0x16213A), hex(0x070A10)])!.draw(in: bg, relativeCenterPosition: NSPoint(x: -0.2, y: 0.5))
     NSGraphicsContext.saveGraphicsState()
     bg.addClip()
     let cg = NSGraphicsContext.current!.cgContext
@@ -32,9 +32,9 @@ func render(size: CGFloat) -> Data {
         let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 1])!
         cg.drawRadialGradient(gradient, startCenter: p(x, y), startRadius: 0, endCenter: p(x, y), endRadius: radius * s, options: [])
     }
-    nebula(300, 800, 420, hex(0x6E40C9, 0.6))
-    nebula(800, 420, 380, hex(0x1F6FEB, 0.45))
-    nebula(380, 200, 340, hex(0x39D0E6, 0.22))
+    nebula(300, 800, 420, hex(0x2B3C5E, 0.75))
+    nebula(800, 420, 380, hex(0x1D3B48, 0.6))
+    nebula(380, 200, 340, hex(0x9CC3FF, 0.12))
     var rng = LCG(s: 0xBE11F7)
     for _ in 0..<70 {
         let x = 110 + rng.next() * 800, y = 110 + rng.next() * 800, d = 3 + rng.next() * 7
@@ -45,14 +45,14 @@ func render(size: CGFloat) -> Data {
 
     // Glow under everything that follows.
     let glow = NSShadow()
-    glow.shadowColor = hex(0x8A7CFF, 0.9)
+    glow.shadowColor = hex(0x9CC3FF, 0.75)
     glow.shadowBlurRadius = 40 * s
     glow.shadowOffset = .zero
 
     // Tower: pointed roof, belfry arch, base.
     NSGraphicsContext.saveGraphicsState()
     glow.set()
-    hex(0xE6EDF3).setFill()
+    hex(0x2A3550).setFill()
     let roof = NSBezierPath()
     roof.move(to: p(512, 820)); roof.line(to: p(700, 640)); roof.line(to: p(324, 640)); roof.close()
     roof.fill()
@@ -78,20 +78,20 @@ func render(size: CGFloat) -> Data {
     bell.close()
     NSGraphicsContext.saveGraphicsState()
     let bellGlow = NSShadow()
-    bellGlow.shadowColor = hex(0x58A6FF, 1)
+    bellGlow.shadowColor = hex(0xC9DDFF, 1)
     bellGlow.shadowBlurRadius = 36 * s
     bellGlow.shadowOffset = .zero
     bellGlow.set()
-    hex(0x58A6FF).setFill()
+    hex(0xC9DDFF).setFill()
     bell.fill()
     NSGraphicsContext.restoreGraphicsState()
-    NSGradient(colors: [hex(0xA371F7), hex(0x58A6FF), hex(0x39D0E6)])!.draw(in: bell, angle: -60)
-    NSGradient(colors: [hex(0xA371F7), hex(0x39D0E6)])!.draw(in: NSBezierPath(ovalIn: r(487, 344, 50, 50)), angle: -60)
+    NSGradient(colors: [hex(0xFFFFFF), hex(0xC9DDFF), hex(0x7F9CC9)])!.draw(in: bell, angle: -70)
+    NSGradient(colors: [hex(0xFFFFFF), hex(0x9CC3FF)])!.draw(in: NSBezierPath(ovalIn: r(487, 344, 50, 50)), angle: -60)
 
     // Signal arcs: purple inside, cyan outside.
     NSGraphicsContext.saveGraphicsState()
     glow.set()
-    for (radius, color) in [(215.0, hex(0xA371F7)), (278.0, hex(0x39D0E6, 0.85))] {
+    for (radius, color) in [(215.0, hex(0xC9DDFF)), (278.0, hex(0x9CC3FF, 0.6))] {
         for (start, end) in [(-28.0, 28.0), (152.0, 208.0)] {
             let wave = NSBezierPath()
             wave.appendArc(withCenter: p(512, 475), radius: radius * s, startAngle: start, endAngle: end)

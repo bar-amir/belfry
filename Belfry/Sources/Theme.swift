@@ -1,30 +1,34 @@
 import AppKit
 import SwiftUI
 
-/// Belfry's deep-space look: a dark canvas with nebula glow and stars, glass surfaces, an aurora gradient for the
-/// one primary action, and GitHub's familiar state colours (open green, merged purple, failed red) as light sources.
-/// The panel is always dark by design; text colours are chosen for at least 4.5:1 on `canvas`.
+/// Belfry's "starlight" look: a quiet night sky, one ice-blue accent, a moonlight-white primary action, and GitHub's
+/// state colours muted so they inform rather than shout. The panel is always dark by design; every text colour
+/// clears 4.5:1 on `canvas`. Glass comes from macOS itself (Liquid Glass on macOS 26 and later).
 enum Theme {
-    static let canvas = Color(hex: "#070B14")
-    static let text = Color(hex: "#E6EDF3")
-    static let secondaryText = Color(hex: "#9AA4B2")
-    static let tertiaryText = Color(hex: "#7D8794")
+    static let canvas = Color(hex: "#080B11")
+    static let text = Color(hex: "#E8EDF3")
+    static let secondaryText = Color(hex: "#9DA7B3")
+    static let tertiaryText = Color(hex: "#7F8996")
+    static let surface = Color(hex: "#0E131C")
     static let glass = Color.white.opacity(0.045)
     static let glassStrong = Color.white.opacity(0.08)
-    static let hairline = Color.white.opacity(0.09)
-    static let hairlineStrong = Color.white.opacity(0.16)
+    static let hairline = Color.white.opacity(0.08)
+    static let hairlineStrong = Color.white.opacity(0.15)
 
-    static let accent = Color(hex: "#58A6FF")
-    static let open = Color(hex: "#3FB950")
-    static let merged = Color(hex: "#A371F7")
-    static let danger = Color(hex: "#FF6B63")
-    static let attention = Color(hex: "#E3B341")
-    static let cyan = Color(hex: "#39D0E6")
+    /// Ice blue: selection, focus, the tab bar.
+    static let accent = Color(hex: "#9CC3FF")
+    /// Moonlight: the one primary button.
+    static let moon = Color(hex: "#E8EDF3")
+    static let onMoon = Color(hex: "#0B0F16")
 
-    static let aurora = LinearGradient(colors: [Color(hex: "#A371F7"), Color(hex: "#6E7BFF"), Color(hex: "#39D0E6")],
-                                       startPoint: .leading, endPoint: .trailing)
-    static let auroraDiagonal = LinearGradient(colors: [Color(hex: "#A371F7"), Color(hex: "#58A6FF"), Color(hex: "#39D0E6")],
-                                               startPoint: .topLeading, endPoint: .bottomTrailing)
+    static let open = Color(hex: "#7FCB97")
+    static let merged = Color(hex: "#B8A4EE")
+    static let danger = Color(hex: "#EE9A93")
+    static let attention = Color(hex: "#DCC07A")
+
+    /// A barely-there sheen used for titles and lit edges.
+    static let starlight = LinearGradient(colors: [Color(hex: "#FFFFFF"), Color(hex: "#C9DDFF")],
+                                          startPoint: .topLeading, endPoint: .bottomTrailing)
 }
 
 enum Spacing {
@@ -44,22 +48,86 @@ extension Color {
     }
 }
 
-// MARK: - Space background
+// MARK: - Rendering mode
 
-/// Deep-space canvas: nebula glows and a slowly twinkling starfield (static under Reduce Motion).
+private struct SnapshotModeKey: EnvironmentKey { static let defaultValue = false }
+private struct FrozenTimeKey: EnvironmentKey { static let defaultValue: TimeInterval? = nil }
+
+extension EnvironmentValues {
+    /// True while `--snapshot` renders offscreen, where system glass can't composite.
+    var snapshotMode: Bool {
+        get { self[SnapshotModeKey.self] }
+        set { self[SnapshotModeKey.self] = newValue }
+    }
+
+    /// A fixed clock for the starfield and other ambient motion, used when rendering animation frames.
+    var frozenTime: TimeInterval? {
+        get { self[FrozenTimeKey.self] }
+        set { self[FrozenTimeKey.self] = newValue }
+    }
+}
+
+// MARK: - Glass
+
+/// System glass where macOS has it, a frosted fallback elsewhere.
+struct LiquidGlass<S: Shape>: ViewModifier {
+    let shape: S
+    var tint: Color?
+    var interactive = false
+    @Environment(\.snapshotMode) private var snapshotMode
+
+    func body(content: Content) -> some View {
+        if #available(macOS 26, *), !snapshotMode {
+            content.glassEffect(Glass.regular.tint(tint).interactive(interactive), in: shape)
+        } else if !snapshotMode {
+            content
+                .background(.regularMaterial, in: shape)
+                .background(shape.fill(tint?.opacity(0.18) ?? .clear))
+                .overlay(shape.stroke(Theme.hairlineStrong))
+        } else {
+            // Offscreen renders can't blur what's behind, so the stand-in is nearly opaque.
+            content
+                .background(shape.fill(Color(hex: "#182030")))
+                .background(shape.fill(tint?.opacity(0.18) ?? .clear))
+                .overlay(shape.stroke(LinearGradient(colors: [.white.opacity(0.22), .white.opacity(0.06)],
+                                                     startPoint: .top, endPoint: .bottom)))
+        }
+    }
+}
+
+extension View {
+    func liquidGlass<S: Shape>(_ shape: S, tint: Color? = nil, interactive: Bool = false) -> some View {
+        modifier(LiquidGlass(shape: shape, tint: tint, interactive: interactive))
+    }
+
+    /// A quiet, mostly opaque card for content (repository boxes). Glass is kept for controls that float.
+    func card(cornerRadius: CGFloat = 12) -> some View {
+        background(RoundedRectangle(cornerRadius: cornerRadius).fill(Theme.surface.opacity(0.88)))
+            .overlay(RoundedRectangle(cornerRadius: cornerRadius).stroke(Theme.hairline))
+    }
+
+    func glow(_ color: Color, radius: CGFloat = 6) -> some View {
+        shadow(color: color.opacity(0.45), radius: radius)
+    }
+}
+
+// MARK: - Sky
+
+/// A quiet night sky: two faint glows and a slowly twinkling starfield (still under Reduce Motion).
 struct SpaceBackground: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.frozenTime) private var frozenTime
 
     var body: some View {
         ZStack {
             Theme.canvas
-            RadialGradient(colors: [Color(hex: "#6E40C9").opacity(0.32), .clear], center: UnitPoint(x: 0.08, y: 0.0),
-                           startRadius: 0, endRadius: 260)
-            RadialGradient(colors: [Color(hex: "#1F6FEB").opacity(0.24), .clear], center: UnitPoint(x: 0.95, y: 0.12),
-                           startRadius: 0, endRadius: 240)
-            RadialGradient(colors: [Color(hex: "#39D0E6").opacity(0.10), .clear], center: UnitPoint(x: 0.6, y: 1.05),
+            RadialGradient(colors: [Color(hex: "#2B3C5E").opacity(0.45), .clear], center: UnitPoint(x: 0.1, y: 0),
                            startRadius: 0, endRadius: 300)
-            if reduceMotion {
+            RadialGradient(colors: [Color(hex: "#1D3B48").opacity(0.35), .clear], center: UnitPoint(x: 0.95, y: 0.35),
+                           startRadius: 0, endRadius: 280)
+            if let frozenTime {
+                StarField(time: frozenTime)
+            } else if reduceMotion {
                 StarField(time: 0)
             } else {
                 TimelineView(.animation(minimumInterval: 1 / 20)) { context in
@@ -71,24 +139,23 @@ struct SpaceBackground: View {
     }
 }
 
-/// Seeded stars, so the sky is the same every time it opens.
 struct StarField: View {
     let time: TimeInterval
     private static let stars: [(x: Double, y: Double, r: Double, phase: Double)] = {
         var generator = SeededGenerator(seed: 0xBE11F7)
-        return (0..<90).map { _ in
+        return (0..<80).map { _ in
             (Double.random(in: 0...1, using: &generator), Double.random(in: 0...1, using: &generator),
-             Double.random(in: 0.35...1.1, using: &generator), Double.random(in: 0...(2 * .pi), using: &generator))
+             Double.random(in: 0.3...1.0, using: &generator), Double.random(in: 0...(2 * .pi), using: &generator))
         }
     }()
 
     var body: some View {
         Canvas { context, size in
             for star in Self.stars {
-                let twinkle = 0.55 + 0.45 * sin(time * 0.9 + star.phase)
+                let twinkle = 0.55 + 0.45 * sin(time * 0.8 + star.phase)
                 let rect = CGRect(x: star.x * size.width, y: star.y * size.height, width: star.r * 2, height: star.r * 2)
-                context.opacity = 0.25 + 0.5 * twinkle * (star.r / 1.1)
-                context.fill(Path(ellipseIn: rect), with: .color(.white))
+                context.opacity = 0.18 + 0.45 * twinkle * star.r
+                context.fill(Path(ellipseIn: rect), with: .color(Color(hex: "#DCE7FF")))
             }
         }
     }
@@ -103,71 +170,29 @@ struct SeededGenerator: RandomNumberGenerator {
     }
 }
 
-// MARK: - Surfaces
-
-extension View {
-    /// Frosted glass with a hairline border.
-    func glass(cornerRadius: CGFloat = 10, strong: Bool = false) -> some View {
-        // Tinted, mostly opaque glass: the nebula glows through, individual stars don't cross text.
-        background(RoundedRectangle(cornerRadius: cornerRadius).fill(Color(hex: "#0C1220").opacity(0.82)))
-            .background(RoundedRectangle(cornerRadius: cornerRadius).fill(strong ? Theme.glassStrong : Theme.glass))
-            .overlay(RoundedRectangle(cornerRadius: cornerRadius).stroke(strong ? Theme.hairlineStrong : Theme.hairline))
-    }
-
-    /// A soft coloured glow, used on state icons and the primary button.
-    func glow(_ color: Color, radius: CGFloat = 6) -> some View {
-        shadow(color: color.opacity(0.55), radius: radius)
-    }
-}
-
 // MARK: - Buttons
 
-/// The one aurora call to action per screen, with a sheen that sweeps across on hover.
+/// Moonlight: the one primary action per screen.
 struct PrimaryButtonStyle: ButtonStyle {
     var height: CGFloat = 30
     @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
-        PrimaryButtonBody(configuration: configuration, height: height, enabled: isEnabled)
-    }
-}
-
-private struct PrimaryButtonBody: View {
-    let configuration: ButtonStyle.Configuration
-    let height: CGFloat
-    let enabled: Bool
-    @State private var sheen: CGFloat = -1
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
         configuration.label
             .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(.white)
+            .foregroundStyle(Theme.onMoon)
             .padding(.horizontal, 14)
             .frame(height: height)
             .background(
-                RoundedRectangle(cornerRadius: 8).fill(Theme.aurora)
-                    .overlay(
-                        GeometryReader { geo in
-                            LinearGradient(colors: [.clear, .white.opacity(0.35), .clear], startPoint: .leading, endPoint: .trailing)
-                                .frame(width: geo.size.width * 0.45)
-                                .offset(x: sheen * geo.size.width)
-                        }
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                    )
+                Capsule().fill(Theme.moon)
+                    .overlay(Capsule().fill(LinearGradient(colors: [.white.opacity(0.7), .clear],
+                                                           startPoint: .top, endPoint: .center)))
             )
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(.white.opacity(0.22)))
-            .glow(Color(hex: "#6E7BFF"), radius: enabled ? 8 : 0)
-            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .shadow(color: .white.opacity(isEnabled ? 0.18 : 0), radius: 10)
+            .scaleEffect(configuration.isPressed ? 0.96 : 1)
             .animation(.spring(response: 0.25, dampingFraction: 0.6), value: configuration.isPressed)
-            .opacity(enabled ? 1 : 0.4)
-            .saturation(enabled ? 1 : 0.2)
-            .contentShape(Rectangle())
-            .onHover { inside in
-                guard inside, enabled, !reduceMotion else { return }
-                sheen = -0.5
-                withAnimation(.easeInOut(duration: 0.7)) { sheen = 1.1 }
-            }
+            .opacity(isEnabled ? 1 : 0.35)
+            .contentShape(Capsule())
     }
 }
 
@@ -180,17 +205,17 @@ struct SecondaryButtonStyle: ButtonStyle {
         configuration.label
             .font(.system(size: 12.5, weight: .medium))
             .foregroundStyle(Theme.text)
-            .padding(.horizontal, 10)
+            .padding(.horizontal, 11)
             .frame(height: height)
-            .glass(cornerRadius: 7, strong: configuration.isPressed)
-            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .liquidGlass(Capsule(), interactive: true)
+            .scaleEffect(configuration.isPressed ? 0.96 : 1)
             .animation(.spring(response: 0.25, dampingFraction: 0.6), value: configuration.isPressed)
             .opacity(isEnabled ? 1 : 0.4)
-            .contentShape(Rectangle())
+            .contentShape(Capsule())
     }
 }
 
-/// Square glass icon button for row and header actions.
+/// A round glass icon button for row and header actions.
 struct IconButtonStyle: ButtonStyle {
     var size: CGFloat = 28
     var tint: Color = Theme.text
@@ -200,16 +225,15 @@ struct IconButtonStyle: ButtonStyle {
             .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(tint)
             .frame(width: size, height: size)
-            .glass(cornerRadius: 8, strong: configuration.isPressed)
-            .scaleEffect(configuration.isPressed ? 0.92 : 1)
+            .liquidGlass(Circle(), interactive: true)
+            .scaleEffect(configuration.isPressed ? 0.9 : 1)
             .animation(.spring(response: 0.25, dampingFraction: 0.55), value: configuration.isPressed)
-            .contentShape(Rectangle())
+            .contentShape(Circle())
     }
 }
 
 // MARK: - Small pieces
 
-/// A keycap with a lit bottom edge.
 struct Kbd: View {
     let text: String
     init(_ text: String) { self.text = text }
@@ -222,9 +246,6 @@ struct Kbd: View {
             .frame(minWidth: 18, minHeight: 18)
             .background(RoundedRectangle(cornerRadius: 5).fill(Theme.glassStrong))
             .overlay(RoundedRectangle(cornerRadius: 5).stroke(Theme.hairlineStrong))
-            .overlay(alignment: .bottom) {
-                RoundedRectangle(cornerRadius: 1).fill(.white.opacity(0.18)).frame(height: 1).padding(.horizontal, 3)
-            }
     }
 }
 
@@ -248,16 +269,16 @@ struct Counter: View {
     var body: some View {
         Text(verbatim: "\(count)")
             .font(.system(size: 10.5, weight: .bold, design: .monospaced))
-            .foregroundStyle(lit ? .white : Theme.secondaryText)
+            .foregroundStyle(lit ? Theme.accent : Theme.secondaryText)
             .contentTransition(.numericText(value: Double(count)))
             .animation(.spring(response: 0.35, dampingFraction: 0.7), value: count)
             .padding(.horizontal, 6)
             .frame(minWidth: 20, minHeight: 17)
-            .background(Capsule().fill(lit ? AnyShapeStyle(Theme.aurora) : AnyShapeStyle(Theme.glassStrong)))
+            .background(Capsule().fill(lit ? Theme.accent.opacity(0.16) : Theme.glassStrong))
     }
 }
 
-/// A GitHub-style label pill tinted by meaning.
+/// A GitHub-style label pill, tinted quietly by meaning.
 struct LabelPill: View {
     let text: String
     let color: Color
@@ -269,12 +290,11 @@ struct LabelPill: View {
             .lineLimit(1)
             .padding(.horizontal, 7)
             .frame(height: 18)
-            .background(Capsule().fill(color.opacity(0.14)))
-            .overlay(Capsule().stroke(color.opacity(0.45)))
+            .background(Capsule().fill(color.opacity(0.10)))
+            .overlay(Capsule().stroke(color.opacity(0.28)))
     }
 }
 
-/// A branch name, monospaced, as GitHub shows refs.
 struct BranchPill: View {
     let name: String
 
@@ -286,11 +306,11 @@ struct BranchPill: View {
             .truncationMode(.middle)
             .padding(.horizontal, 6)
             .frame(height: 18)
-            .background(RoundedRectangle(cornerRadius: 5).fill(Theme.accent.opacity(0.13)))
+            .background(RoundedRectangle(cornerRadius: 5).fill(Theme.accent.opacity(0.10)))
     }
 }
 
-/// A five-by-five mirrored identicon drawn locally from a login, so people are recognisable without loading images.
+/// A five-by-five mirrored identicon drawn locally from a login.
 struct Identicon: View {
     let login: String
     var size: CGFloat = 16
@@ -298,7 +318,7 @@ struct Identicon: View {
     var body: some View {
         let hash = login.utf8.reduce(UInt64(1469598103934665603)) { ($0 ^ UInt64($1)) &* 1099511628211 }
         let hue = Double(hash % 360) / 360
-        let color = Color(hue: hue, saturation: 0.65, brightness: 0.95)
+        let color = Color(hue: hue, saturation: 0.38, brightness: 0.92)
         Canvas { context, canvasSize in
             let cell = canvasSize.width / 6
             let inset = cell / 2
@@ -312,22 +332,9 @@ struct Identicon: View {
             }
         }
         .frame(width: size, height: size)
-        .background(Circle().fill(Color.white.opacity(0.08)))
+        .background(Circle().fill(Color.white.opacity(0.07)))
         .clipShape(Circle())
-        .overlay(Circle().stroke(color.opacity(0.5), lineWidth: 0.75))
+        .overlay(Circle().stroke(color.opacity(0.4), lineWidth: 0.75))
         .accessibilityHidden(true)
-    }
-}
-
-/// Small uppercase label.
-struct SectionLabel: View {
-    let text: String
-    init(_ text: String) { self.text = text }
-
-    var body: some View {
-        Text(text.uppercased())
-            .font(.system(size: 10.5, weight: .semibold))
-            .tracking(0.9)
-            .foregroundStyle(Theme.secondaryText)
     }
 }

@@ -1,10 +1,13 @@
 # Belfry
 
-A small native macOS menu-bar app that rings when something happens on GitHub. It wears a deep-space look of
-its own: a twinkling starfield, nebula glows, glass panels, GitHub's state colours as light sources, and small
-animations that get out of the way when Reduce Motion is on.
-Belfry polls your GitHub notifications and shows each new one as a native macOS
-banner. Clicking a banner opens the pull request, issue or comment in your browser.
+A small native macOS menu-bar app that rings when something happens on GitHub. It has a quiet night-sky look
+of its own: a faint starfield, one ice-blue accent, GitHub's state colours muted so they inform rather than shout,
+macOS Liquid Glass on the controls that float, and small animations for every action. All of it stays still
+when Reduce Motion is on.
+
+<p align="center"><img src="docs/media/inbox.png" width="420" alt="The Belfry inbox: repositories as cards, each row with a state icon, what happened, and labels"></p>
+
+<p align="center"><img src="docs/media/actions.gif" width="420" alt="Mark done, mute, open, done with all and undo, animated"></p>
 
 - **Banners that say what happened.** "@sam approved: looks good", "@kim commented: …", "Merged by @lee",
   "✗ 3 of 3 runs failed · CI, Lint". Clicking a banner opens the exact PR, review or comment.
@@ -79,10 +82,12 @@ To see what Belfry resolves for your current notifications without the UI:
 BELFRY_GITHUB_TOKEN="$(gh auth token)" build/Build/Products/Release/Belfry.app/Contents/MacOS/Belfry --dump
 ```
 
-To render every screen and state to PNGs in light and dark mode, from fictional data (for design review):
+To render every screen and state to PNGs from fictional data (for design review), or every action animation
+frame by frame (30 fps, one folder per action, ready for `ffmpeg`):
 
 ```bash
 build/Build/Products/Release/Belfry.app/Contents/MacOS/Belfry --snapshot /tmp/belfry-snapshots
+build/Build/Products/Release/Belfry.app/Contents/MacOS/Belfry --animations /tmp/belfry-frames
 ```
 
 See [docs/research.md](docs/research.md) for how Belfry compares with other clients and what's next.

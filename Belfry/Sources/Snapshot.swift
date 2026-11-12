@@ -17,7 +17,8 @@ enum Snapshot {
             for dark in [false, true] {
                 let view = MenuContentView()
                     .environmentObject(store)
-                    .background(Color(nsColor: .windowBackgroundColor))
+                    .environment(\.snapshotMode, true)
+                    .environment(\.frozenTime, 12)
                 render(view, dark: dark, to: folder.appendingPathComponent("\(name)-\(dark ? "dark" : "light").png"))
             }
         }
@@ -73,7 +74,7 @@ enum Snapshot {
 
         f.applyNormal(store)
         for dark in [false, true] {
-            render(SettingsView().environmentObject(store), dark: dark,
+            render(SettingsView().environmentObject(store).environment(\.snapshotMode, true), dark: dark,
                    to: folder.appendingPathComponent("20-settings-\(dark ? "dark" : "light").png"))
             for (name, count, err) in [("idle", 0, false), ("count", 12, false), ("error", 0, true)] {
                 render(MenuBarLabel(count: count, hasError: err).padding(6),
@@ -198,5 +199,180 @@ struct Fixtures {
                                summary: "@a-very-long-username-for-testing commented: This is a long first line of a comment that goes on well past the width of the panel to check wrapping.",
                                tags: [.comment])
         store.applyFixture(threads: long, details: d, reviews: reviews, requesters: requesters)
+    }
+}
+
+// MARK: - Action animation frames
+
+/// `Belfry --animations <folder>` renders each action animation frame by frame (30 fps) from fixtures, so the
+/// micro-interactions can be reviewed as video. Each clip goes to its own subfolder as 000.png, 001.png, …
+@MainActor
+enum AnimationFrames {
+    static let fps = 30.0
+
+    static func renderAll(to folder: URL) {
+        let store = NotificationStore.shared
+        let f = Fixtures()
+        f.applyNormal(store)
+        let rows = ["1", "2", "3"].compactMap { id in store.items(from: f.threads).first { $0.id == id } }
+        let ids = rows.map(\.id)
+
+        func clip(_ name: String, seconds: Double, frame: (Double) -> DemoState) {
+            let dir = folder.appendingPathComponent(name)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let count = Int(seconds * fps)
+            for i in 0..<count {
+                let t = Double(i) / fps
+                let view = ActionDemo(rows: rows, state: frame(t), time: 12 + t)
+                    .environmentObject(store)
+                    .environment(\.snapshotMode, true)
+                    .environment(\.frozenTime, 12 + t)
+                Snapshot.render(view, dark: true, to: dir.appendingPathComponent(String(format: "%03d.png", i)))
+            }
+        }
+
+        let target = ids[1]
+        clip("1-done", seconds: 2.0) { t in
+            var s = DemoState(caption: "Mark done", keys: ["E"], selected: target)
+            let p = ease(progress(t, 0.25, 0.6))
+            s.exit[target] = (.done, p)
+            s.collapse[target] = easeOut(progress(t, 0.85, 0.3))
+            s.toast = easeOut(progress(t, 0.8, 0.3))
+            s.toastMark = progress(t, 0.85, 0.5)
+            s.pending = PendingAction(kind: .done, threadIds: [], message: "Marked “Cache invoice totals per account” done")
+            return s
+        }
+        clip("2-mute", seconds: 2.0) { t in
+            var s = DemoState(caption: "Mute thread", keys: ["M"], selected: target)
+            s.exit[target] = (.mute, ease(progress(t, 0.25, 0.7)))
+            s.collapse[target] = easeOut(progress(t, 0.95, 0.3))
+            s.toast = easeOut(progress(t, 0.9, 0.3))
+            s.toastMark = progress(t, 0.95, 0.6)
+            s.pending = PendingAction(kind: .mute, threadIds: [], message: "Muted “Cache invoice totals per account”")
+            return s
+        }
+        clip("3-open", seconds: 1.3) { t in
+            var s = DemoState(caption: "Open in browser", keys: ["↵"], selected: ids[0])
+            s.open[ids[0]] = easeOut(progress(t, 0.25, 0.5))
+            return s
+        }
+        clip("4-done-all", seconds: 2.4) { t in
+            var s = DemoState(caption: "Done with 3", keys: ["⌘", "⌫"], selected: nil)
+            for (index, id) in ids.enumerated() {
+                let start = 0.3 + Double(index) * 0.06
+                s.exit[id] = (.done, ease(progress(t, start, 0.6)))
+                s.collapse[id] = easeOut(progress(t, start + 0.6, 0.3))
+            }
+            s.empty = easeOut(progress(t, 1.25, 0.4))
+            s.toast = easeOut(progress(t, 1.1, 0.3))
+            s.toastMark = progress(t, 1.15, 0.5)
+            s.pending = PendingAction(kind: .done, threadIds: [], message: "Marked 3 done")
+            return s
+        }
+        clip("5-undo", seconds: 1.8) { t in
+            var s = DemoState(caption: "Undo", keys: ["⌘", "Z"], selected: target)
+            let back = progress(t, 0.35, 0.5)
+            s.collapse[target] = 1 - easeOutBack(back)
+            s.reenter[target] = easeOut(back)
+            s.toast = 1 - easeOut(progress(t, 0.3, 0.25))
+            s.toastMark = 1
+            s.pending = PendingAction(kind: .done, threadIds: [], message: "Marked “Cache invoice totals per account” done")
+            return s
+        }
+        print("Wrote animation frames to \(folder.path)")
+    }
+
+    static func progress(_ t: Double, _ start: Double, _ duration: Double) -> Double {
+        max(0, min(1, (t - start) / duration))
+    }
+
+    static func ease(_ x: Double) -> Double { x < 0.5 ? 2 * x * x : 1 - pow(-2 * x + 2, 2) / 2 }
+    static func easeOut(_ x: Double) -> Double { 1 - pow(1 - x, 3) }
+    static func easeOutBack(_ x: Double) -> Double {
+        let c1 = 1.4, c3 = c1 + 1
+        return 1 + c3 * pow(x - 1, 3) + c1 * pow(x - 1, 2)
+    }
+}
+
+struct DemoState {
+    var caption: String
+    var keys: [String]
+    var selected: String?
+    var exit: [String: (ExitKind, Double)] = [:]
+    var open: [String: Double] = [:]
+    var collapse: [String: Double] = [:]
+    var reenter: [String: Double] = [:]
+    var toast: Double = 0
+    var toastMark: Double = 0
+    var pending: PendingAction?
+    var empty: Double = 0
+}
+
+/// One frame of an action animation: a caption, a repository card with three rows, and the floating footer.
+struct ActionDemo: View {
+    let rows: [InboxItem]
+    let state: DemoState
+    let time: Double
+    private let rowHeight: CGFloat = 84
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Text(state.caption)
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(Theme.starlight)
+                HStack(spacing: 3) { ForEach(state.keys, id: \.self) { Kbd($0) } }
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            .padding(.bottom, 12)
+
+            ZStack(alignment: .top) {
+                VStack(spacing: 0) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "book.closed.fill").font(.system(size: 11)).foregroundStyle(Theme.secondaryText)
+                        (Text("acme/").foregroundStyle(Theme.secondaryText) + Text("api").foregroundStyle(Theme.text).bold())
+                            .font(.system(size: 12.5))
+                        Spacer()
+                        Counter(count: rows.filter { (state.collapse[$0.id] ?? 0) < 0.5 }.count)
+                    }
+                    .padding(.horizontal, 12)
+                    .frame(height: 38)
+                    Rectangle().fill(Theme.hairline).frame(height: 1)
+                    ForEach(rows) { item in
+                        let collapse = state.collapse[item.id] ?? 0
+                        let reenter = state.reenter[item.id]
+                        ItemRow(item: item, selected: state.selected == item.id,
+                                demoExit: state.exit[item.id], demoOpen: state.open[item.id])
+                            .opacity(reenter ?? 1)
+                            .scaleEffect(reenter.map { 0.94 + 0.06 * $0 } ?? 1, anchor: .top)
+                            .frame(height: max(0, rowHeight * (1 - collapse)), alignment: .top)
+                            .clipped()
+                    }
+                }
+                .card()
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .opacity(1 - state.empty)
+
+                EmptyStateView(title: "You're all caught up", message: "Nothing new in orbit.")
+                    .opacity(state.empty)
+                    .scaleEffect(0.96 + 0.04 * state.empty)
+            }
+            .padding(.horizontal, 14)
+            Spacer(minLength: 0)
+            ZStack {
+                FooterBar(pending: nil, showingReviews: false, total: rows.count, doneAll: {}, undo: {})
+                    .opacity(1 - state.toast)
+                FooterBar(pending: state.pending, showingReviews: false, total: 0, doneAll: {}, undo: {},
+                          toastProgress: state.toastMark)
+                    .opacity(state.toast)
+                    .offset(y: 14 * (1 - state.toast))
+            }
+            .padding(10)
+        }
+        .frame(width: panelWidth, height: 430)
+        .background(SpaceBackground())
+        .environment(\.colorScheme, .dark)
     }
 }
