@@ -7,8 +7,9 @@ banner. Clicking a banner opens the pull request, issue or comment in your brows
 - Menu-bar bell with your unread count
 - Dropdown of unread notifications grouped by repository. Click to open,
   ✓ to mark read, or "Mark all read"
-- Banners show the title, repository and reason (review requested, mention,
-  comment, CI and so on)
+- Every banner and row says what actually happened, not just GitHub's reason
+  code: "@sam approved: looks good", "@kim commented: …", "Merged by @lee",
+  "✗ Failed on feat/x" (CI rows link to that branch's runs)
 - Polls with `If-Modified-Since`, so an unchanged inbox costs a cheap `304`,
   and it waits at least as long as GitHub's `X-Poll-Interval` asks
 - Never announces the same activity twice. The last-seen `updated_at` per
@@ -62,6 +63,12 @@ the environment when you run the binary directly:
 
 ```bash
 BELFRY_GITHUB_TOKEN="$(gh auth token)" build/Build/Products/Release/Belfry.app/Contents/MacOS/Belfry
+```
+
+To see what Belfry resolves for your current notifications without the UI:
+
+```bash
+BELFRY_GITHUB_TOKEN="$(gh auth token)" build/Build/Products/Release/Belfry.app/Contents/MacOS/Belfry --dump
 ```
 
 ## A note on your own activity

@@ -73,7 +73,7 @@ struct MenuContentView: View {
     }
 
     private var listHeight: CGFloat {
-        let estimate = CGFloat(store.threads.count) * 52 + CGFloat(store.groupedByRepo.count) * 24
+        let estimate = CGFloat(store.threads.count) * 66 + CGFloat(store.groupedByRepo.count) * 24
         return min(max(estimate, 80), 460)
     }
 
@@ -108,9 +108,14 @@ struct ThreadRow: View {
                 .frame(width: 16)
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 2) {
-                Text(thread.subject.title).lineLimit(2)
-                Text("\(thread.reasonLabel) · \(Self.relative(thread.updatedAt))")
-                    .font(.caption).foregroundStyle(.secondary)
+                Text(thread.displayTitle).lineLimit(2)
+                if let summary = detail?.summary {
+                    Text(summary)
+                        .font(.callout)
+                        .foregroundStyle(summary.hasPrefix("✗") ? Color.red : Color.primary.opacity(0.8))
+                        .lineLimit(2)
+                }
+                Text(meta).font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 4)
             Button { store.markRead(thread) } label: { Image(systemName: "checkmark") }
@@ -123,7 +128,15 @@ struct ThreadRow: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture { store.open(thread) }
+        .onAppear { store.loadDetail(for: thread) }
         .help("Open in browser")
+    }
+
+    private var detail: ThreadDetail? { store.detail(for: thread) }
+
+    private var meta: String {
+        let number = detail?.number.map { "#\($0) · " } ?? ""
+        return "\(number)\(thread.reasonLabel) · \(Self.relative(thread.updatedAt))"
     }
 
     private static let parser = ISO8601DateFormatter()

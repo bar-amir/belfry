@@ -11,6 +11,9 @@ final class NotificationStore: ObservableObject {
     @Published private(set) var lastChecked: Date?
     @Published private(set) var isRefreshing = false
     @Published private(set) var hasToken = false
+    /// Resolved "what happened" per thread, keyed by thread id and valid for one `updated_at`.
+    @Published private(set) var details: [String: (updatedAt: String, detail: ThreadDetail)] = [:]
+    private var loadingDetails: Set<String> = []
 
     @AppStorage("pollIntervalSeconds") var pollIntervalSeconds: Double = 60
     @AppStorage("soundEnabled") var soundEnabled = true
@@ -110,20 +113,22 @@ final class NotificationStore: ObservableObject {
 
         toNotify.sort { $0.updatedAt > $1.updatedAt }
         for thread in toNotify.prefix(maxBannersPerPoll) {
-            let url = await client.htmlURL(for: thread)
-            postBanner(for: thread, url: url)
+            let detail = await client.details(for: thread)
+            details[thread.id] = (thread.updatedAt, detail)
+            postBanner(for: thread, detail: detail)
         }
         let overflow = toNotify.count - maxBannersPerPoll
         if overflow > 0 { postSummaryBanner(count: overflow) }
     }
 
-    private func postBanner(for thread: GitHubThread, url: URL) {
+    private func postBanner(for thread: GitHubThread, detail: ThreadDetail) {
         let content = UNMutableNotificationContent()
-        content.title = thread.subject.title
-        content.subtitle = "\(thread.repository.fullName) · \(thread.reasonLabel)"
-        content.body = Self.typeLabel(thread.subject.type)
+        content.title = thread.displayTitle
+        let number = detail.number.map { " #\($0)" } ?? ""
+        content.subtitle = "\(thread.repository.fullName)\(number) · \(thread.reasonLabel)"
+        content.body = detail.summary ?? Self.typeLabel(thread.subject.type)
         content.threadIdentifier = thread.repository.fullName
-        content.userInfo = [AppDelegate.urlKey: url.absoluteString, AppDelegate.threadKey: thread.id]
+        content.userInfo = [AppDelegate.urlKey: detail.url.absoluteString, AppDelegate.threadKey: thread.id]
         if soundEnabled { content.sound = .default }
         let request = UNNotificationRequest(identifier: "thread-\(thread.id)", content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
@@ -160,7 +165,27 @@ final class NotificationStore: ObservableObject {
 
     // MARK: Actions
 
+    func detail(for thread: GitHubThread) -> ThreadDetail? {
+        guard let cached = details[thread.id], cached.updatedAt == thread.updatedAt else { return nil }
+        return cached.detail
+    }
+
+    /// Fetches a row's detail when it scrolls into view.
+    func loadDetail(for thread: GitHubThread) {
+        guard detail(for: thread) == nil, !loadingDetails.contains(thread.id), let token = currentToken() else { return }
+        loadingDetails.insert(thread.id)
+        Task {
+            let detail = await GitHubClient(token: token).details(for: thread)
+            details[thread.id] = (thread.updatedAt, detail)
+            loadingDetails.remove(thread.id)
+        }
+    }
+
     func open(_ thread: GitHubThread) {
+        if let cached = detail(for: thread) {
+            NSWorkspace.shared.open(cached.url)
+            return
+        }
         guard let token = currentToken() else { return }
         Task {
             let url = await GitHubClient(token: token).htmlURL(for: thread)

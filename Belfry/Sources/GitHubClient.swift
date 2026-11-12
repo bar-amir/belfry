@@ -41,11 +41,16 @@ struct GitHubThread: Codable, Identifiable, Equatable {
         case "mention": return "Mentioned"
         case "team_mention": return "Team mentioned"
         case "comment": return "Comment"
-        case "ci_activity": return "CI"
+        case "ci_activity": return "CI run"
         case "assign": return "Assigned"
-        case "author": return "Activity on your thread"
+        case "author":
+            switch subject.type {
+            case "PullRequest": return "Your pull request"
+            case "Issue": return "Your issue"
+            default: return "Your thread"
+            }
         case "state_change": return "State changed"
-        case "subscribed": return "Watching"
+        case "subscribed": return "Watching repo"
         case "manual": return "Subscribed"
         case "approval_requested": return "Approval requested"
         case "security_alert": return "Security alert"
@@ -53,6 +58,11 @@ struct GitHubThread: Codable, Identifiable, Equatable {
         case "member_feature_requested": return "Feature requested"
         default: return reason.replacingOccurrences(of: "_", with: " ").capitalized
         }
+    }
+
+    /// CI titles are long sentences; show just the workflow name and put the outcome in the detail line.
+    var displayTitle: String {
+        CIRun(title: subject.title)?.workflow ?? subject.title
     }
 
     var typeSymbol: String {
@@ -168,31 +178,127 @@ final class GitHubClient {
         _ = try check(response, data)
     }
 
-    /// Turns a thread's API subject URL into the page a person would open.
-    func htmlURL(for thread: GitHubThread) async -> URL {
+    /// Resolves what actually happened on a thread and where to open it.
+    func details(for thread: GitHubThread) async -> ThreadDetail {
         let repoURL = URL(string: thread.repository.htmlURL) ?? URL(string: "https://github.com/notifications")!
+        let number = thread.subject.url.flatMap { URL(string: $0)?.lastPathComponent }.flatMap(Int.init)
+
         guard let apiString = thread.subject.url, let apiURL = URL(string: apiString) else {
+            if let run = CIRun(title: thread.subject.title) {
+                var c = URLComponents(url: repoURL.appendingPathComponent("actions"), resolvingAgainstBaseURL: false)!
+                c.queryItems = [URLQueryItem(name: "query", value: "branch:\(run.branch)")]
+                return ThreadDetail(url: c.url ?? repoURL, number: nil, summary: run.summary)
+            }
             switch thread.subject.type {
-            case "CheckSuite", "WorkflowRun": return repoURL.appendingPathComponent("actions")
-            case "Discussion": return repoURL.appendingPathComponent("discussions")
-            default: return repoURL
+            case "CheckSuite", "WorkflowRun":
+                return ThreadDetail(url: repoURL.appendingPathComponent("actions"), number: nil, summary: nil)
+            case "Discussion":
+                return ThreadDetail(url: repoURL.appendingPathComponent("discussions"), number: nil, summary: nil)
+            default:
+                return ThreadDetail(url: repoURL, number: nil, summary: nil)
             }
         }
-        // Prefer the latest comment's anchor when it points somewhere other than the subject itself.
+        let fallbackURL = Self.rewrite(apiURL) ?? repoURL
+
+        // A distinct latest comment is the most specific thing to show.
         if let comment = thread.subject.latestCommentURL, comment != apiString,
            let commentURL = URL(string: comment),
-           let html = try? await fetchHTMLURL(commentURL) {
-            return html
+           let item = try? await fetch(APIItem.self, commentURL) {
+            let who = item.user?.login.map { "@\($0)" } ?? "Someone"
+            let verb = item.tagName != nil ? "released \(item.tagName!)" : "commented"
+            let body = item.body.map(Self.snippet).flatMap { $0.isEmpty ? nil : $0 }
+            let summary = body.map { "\(who) \(verb): \($0)" } ?? "\(who) \(verb)"
+            return ThreadDetail(url: item.htmlURL.flatMap(URL.init(string:)) ?? fallbackURL,
+                                number: number, summary: summary)
         }
-        if let html = try? await fetchHTMLURL(apiURL) { return html }
-        return Self.rewrite(apiURL) ?? repoURL
+
+        guard let subject = try? await fetch(APIItem.self, apiURL) else {
+            return ThreadDetail(url: fallbackURL, number: number, summary: nil)
+        }
+        let url = subject.htmlURL.flatMap(URL.init(string:)) ?? fallbackURL
+
+        // For PRs, a review submitted around the notification time is usually the news.
+        if thread.subject.type == "PullRequest",
+           let review = await latestReview(apiURL), Self.near(review.submittedAt, thread.updatedAt) {
+            let who = review.user?.login.map { "@\($0)" } ?? "Someone"
+            let verb: String
+            switch review.state {
+            case "APPROVED": verb = "approved"
+            case "CHANGES_REQUESTED": verb = "requested changes"
+            case "DISMISSED": verb = "had a review dismissed"
+            default: verb = "reviewed"
+            }
+            let body = review.body.map(Self.snippet).flatMap { $0.isEmpty ? nil : $0 }
+            let reviewURL = review.htmlURL.flatMap(URL.init(string:)) ?? url
+            return ThreadDetail(url: reviewURL, number: number,
+                                summary: body.map { "\(who) \(verb): \($0)" } ?? "\(who) \(verb)")
+        }
+        return ThreadDetail(url: url, number: number, summary: Self.stateSummary(subject, type: thread.subject.type))
     }
 
-    private func fetchHTMLURL(_ url: URL) async throws -> URL? {
+    func htmlURL(for thread: GitHubThread) async -> URL {
+        await details(for: thread).url
+    }
+
+    private func fetch<T: Decodable>(_ type: T.Type, _ url: URL) async throws -> T {
         let (data, response) = try await session.data(for: request(url))
         _ = try check(response, data)
-        struct HTML: Decodable { let html_url: String? }
-        return try JSONDecoder().decode(HTML.self, from: data).html_url.flatMap(URL.init(string:))
+        return try JSONDecoder().decode(T.self, from: data)
+    }
+
+    private func latestReview(_ pullURL: URL) async -> APIReview? {
+        var c = URLComponents(url: pullURL.appendingPathComponent("reviews"), resolvingAgainstBaseURL: false)!
+        c.queryItems = [URLQueryItem(name: "per_page", value: "100")]
+        guard let url = c.url, let reviews = try? await fetch([APIReview].self, url) else { return nil }
+        return reviews.filter { $0.state != "PENDING" }.max { ($0.submittedAt ?? "") < ($1.submittedAt ?? "") }
+    }
+
+    private static func stateSummary(_ item: APIItem, type: String) -> String? {
+        let author = item.user?.login.map { " by @\($0)" } ?? ""
+        switch type {
+        case "PullRequest":
+            if item.merged == true || item.mergedAt != nil {
+                return "Merged" + (item.mergedBy?.login.map { " by @\($0)" } ?? "")
+            }
+            if item.state == "closed" { return "Closed without merging" }
+            return (item.draft == true ? "Draft" : "Open") + author
+        case "Issue":
+            if item.state == "closed" {
+                return item.stateReason == "not_planned" ? "Closed as not planned" : "Closed as completed"
+            }
+            return "Open" + author
+        case "Release":
+            return "Released \(item.tagName ?? "")" + (item.author?.login.map { " by @\($0)" } ?? "")
+        default:
+            return nil
+        }
+    }
+
+    /// True when a review landed within a few minutes of the notification's update.
+    private static func near(_ a: String?, _ b: String) -> Bool {
+        let f = ISO8601DateFormatter()
+        guard let a, let da = f.date(from: a), let db = f.date(from: b) else { return false }
+        return abs(da.timeIntervalSince(db)) < 300
+    }
+
+    /// First meaningful line of a markdown body, flattened to plain text and trimmed for a banner.
+    static func snippet(_ body: String) -> String {
+        for raw in body.split(whereSeparator: \.isNewline) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.isEmpty || line.hasPrefix("<") || line.hasPrefix(">") || line.hasPrefix("![") { continue }
+            if line.range(of: #"^\[[^\]]+\]:"#, options: .regularExpression) != nil { continue } // link refs, bot metadata
+            let cleaned = line
+                .replacingOccurrences(of: #"^#+\s*"#, with: "", options: .regularExpression)
+                .replacingOccurrences(of: #"\[([^\]]*)\]\([^)]*\)"#, with: "$1", options: .regularExpression)
+                .replacingOccurrences(of: #"https?://\S+"#, with: "", options: .regularExpression)
+                .replacingOccurrences(of: "**", with: "")
+                .replacingOccurrences(of: "`", with: "")
+                .trimmingCharacters(in: .whitespaces)
+            // Skip lines that were only a reply reference such as "Re: <link>".
+            if cleaned.isEmpty || cleaned.range(of: #"^(Re|re|RE):?$"#, options: .regularExpression) != nil { continue }
+            return cleaned.count > 140 ? String(cleaned.prefix(139)) + "…" : cleaned
+        }
+        return ""
     }
 
     /// Offline fallback: api.github.com/repos/o/r/pulls/1 -> github.com/o/r/pull/1
@@ -213,5 +319,80 @@ final class GitHubClient {
             return URL(string: pieces[0].trimmingCharacters(in: CharacterSet(charactersIn: "<>")))
         }
         return nil
+    }
+}
+
+struct ThreadDetail: Equatable {
+    let url: URL
+    let number: Int?
+    /// What happened, e.g. "@sam approved" or "@kim commented: looks good".
+    let summary: String?
+}
+
+/// Loose shape shared by issues, pull requests, comments and releases.
+private struct APIItem: Decodable {
+    struct User: Decodable { let login: String? }
+    let htmlURL: String?
+    let state: String?
+    let stateReason: String?
+    let merged: Bool?
+    let mergedAt: String?
+    let mergedBy: User?
+    let draft: Bool?
+    let user: User?
+    let author: User?
+    let body: String?
+    let tagName: String?
+
+    enum CodingKeys: String, CodingKey {
+        case state, merged, draft, user, author, body
+        case htmlURL = "html_url"
+        case stateReason = "state_reason"
+        case mergedAt = "merged_at"
+        case mergedBy = "merged_by"
+        case tagName = "tag_name"
+    }
+}
+
+private struct APIReview: Decodable {
+    let user: APIItem.User?
+    let state: String
+    let body: String?
+    let htmlURL: String?
+    let submittedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case user, state, body
+        case htmlURL = "html_url"
+        case submittedAt = "submitted_at"
+    }
+}
+
+/// Parses GitHub's CI notification titles: "<workflow> workflow run <outcome> for <branch> branch".
+struct CIRun {
+    let workflow: String
+    let outcome: String
+    let branch: String
+
+    init?(title: String) {
+        guard let runRange = title.range(of: " workflow run "),
+              let forRange = title.range(of: " for ", range: runRange.upperBound..<title.endIndex)
+        else { return nil }
+        workflow = String(title[..<runRange.lowerBound])
+        outcome = String(title[runRange.upperBound..<forRange.lowerBound])
+        var rest = String(title[forRange.upperBound...])
+        if rest.hasSuffix(" branch") { rest.removeLast(" branch".count) }
+        branch = rest
+    }
+
+    var summary: String {
+        let mark: String
+        switch outcome {
+        case "failed": mark = "✗ Failed"
+        case "succeeded": mark = "✓ Succeeded"
+        case "cancelled": mark = "Cancelled"
+        default: mark = outcome.capitalized
+        }
+        return "\(mark) on \(branch)"
     }
 }
