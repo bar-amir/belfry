@@ -44,6 +44,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             }
             print("Tabs: " + ThreadTab.allCases.map { tab in "\(tab.label) \(threads.filter(tab.contains).count)" }
                 .joined(separator: " · "))
+            var prDetails: [ThreadDetail] = []
+            for thread in threads where thread.subject.type == "PullRequest" {
+                prDetails.append(await client.details(for: thread))
+            }
+            print("PR sub-tabs: " + PRSubTab.allCases.map { sub in
+                let n = sub == .review ? reviews.count : prDetails.filter(sub.contains).count
+                return "\(sub.label) \(n)"
+            }.joined(separator: " · "))
             print("CI filter: " + CIFilter.allCases.map { f in "\(f.label) → \(threads.filter(f.allows).count)" }
                 .joined(separator: " · "))
             for thread in threads.prefix(15) {

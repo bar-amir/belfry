@@ -50,14 +50,40 @@ struct MenuContentView: View {
     }
 
     private var tabs: some View {
-        Picker("", selection: $store.selectedTab) {
+        VStack(spacing: 0) {
+            mainTabs
+            if store.selectedTab == .pullRequests { prSubTabs }
+        }
+    }
+
+    private var mainTabs: some View {
+        FlowLayout(spacing: 4) {
             ForEach(ThreadTab.allCases) { tab in
-                let n = store.count(for: tab)
-                Text(n > 0 ? "\(tab.label) \(n)" : tab.label).tag(tab)
+                TabChip(label: tab.label, count: store.count(for: tab), selected: store.selectedTab == tab) {
+                    store.selectedTab = tab
+                }
             }
         }
-        .pickerStyle(.segmented)
-        .labelsHidden()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10).padding(.bottom, 8)
+    }
+
+    /// Review is always offered; other categories appear only when they have items.
+    private var prSubTabs: some View {
+        let visible = PRSubTab.allCases.filter {
+            $0 == .all || $0 == .review || $0 == store.prSubTab || store.count(for: $0) > 0
+        }
+        return FlowLayout(spacing: 4) {
+            ForEach(visible) { sub in
+                TabChip(label: sub.label,
+                        count: sub == .all ? store.count(for: .pullRequests) : store.count(for: sub),
+                        selected: store.prSubTab == sub,
+                        small: true) {
+                    store.prSubTab = sub
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10).padding(.bottom, 8)
     }
 
@@ -71,7 +97,7 @@ struct MenuContentView: View {
                 }
             }
             .padding(12)
-        } else if store.selectedTab == .review {
+        } else if store.selectedTab == .pullRequests && store.prSubTab == .review {
             reviewList
         } else if store.groupedByRepo.isEmpty {
             Text(store.lastChecked == nil ? "Checking GitHub…"
@@ -82,7 +108,7 @@ struct MenuContentView: View {
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(20)
         } else {
-            ScrollView {
+            ScrollView(.vertical) {
                 LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                     ForEach(store.groupedByRepo, id: \.repo) { group in
                         Section {
@@ -111,7 +137,7 @@ struct MenuContentView: View {
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(20)
         } else {
-            ScrollView {
+            ScrollView(.vertical) {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(store.reviewRequests) { ReviewRow(pr: $0) }
                 }
@@ -136,7 +162,7 @@ struct MenuContentView: View {
             .help("Which CI runs to show and announce")
             if let checked = store.lastChecked {
                 Text("Checked \(checked.formatted(date: .omitted, time: .shortened))")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             }
             Spacer()
             Button("Settings…") { showSettings() }.buttonStyle(.borderless)
@@ -170,8 +196,9 @@ struct ThreadRow: View {
                         .foregroundStyle(summary.hasPrefix("✗") ? Color.red : Color.primary.opacity(0.8))
                         .lineLimit(2)
                 }
-                Text(meta).font(.caption).foregroundStyle(.secondary)
+                Text(meta).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             Spacer(minLength: 4)
             Button { store.markRead(thread) } label: { Image(systemName: "checkmark") }
                 .buttonStyle(.borderless)
@@ -179,6 +206,7 @@ struct ThreadRow: View {
                 .opacity(hovering ? 1 : 0.35)
         }
         .padding(.horizontal, 10).padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(hovering ? Color.primary.opacity(0.06) : .clear)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
@@ -220,15 +248,17 @@ struct ReviewRow: View {
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 2) {
                 Text(pr.title).lineLimit(2)
-                Text(requestLine)
+                Text(requestLine).lineLimit(2)
                     .font(.callout)
                     .foregroundStyle(Color.primary.opacity(0.8))
                 Text("\(pr.repoFullName) #\(pr.number)\(pr.draft == true ? " · draft" : "") · updated \(ThreadRow.relative(pr.updatedAt))")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             Spacer(minLength: 4)
         }
         .padding(.horizontal, 10).padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(hovering ? Color.primary.opacity(0.06) : .clear)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
@@ -242,5 +272,69 @@ struct ReviewRow: View {
             return who == pr.user?.login ? "@\(who) asked for your review" : "@\(who) asked for your review · \(author)"
         }
         return "Waiting for your review \(author)"
+    }
+}
+
+/// A tab rendered as a compact pill with an optional count.
+struct TabChip: View {
+    let label: String
+    let count: Int
+    let selected: Bool
+    var small = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Text(label)
+                if count > 0 {
+                    Text("\(count)")
+                        .monospacedDigit()
+                        .foregroundStyle(selected ? Color.white.opacity(0.85) : Color.secondary)
+                }
+            }
+            .font(small ? .caption : .callout)
+            .lineLimit(1)
+            .fixedSize()
+            .padding(.horizontal, small ? 7 : 9)
+            .padding(.vertical, small ? 2 : 3)
+            .foregroundStyle(selected ? Color.white : Color.primary)
+            .background(Capsule().fill(selected ? Color.accentColor : Color.primary.opacity(small ? 0.05 : 0.08)))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// Lays children out left to right and wraps onto new lines instead of overflowing.
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 4
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? .infinity
+        var x: CGFloat = 0, y: CGFloat = 0, lineHeight: CGFloat = 0, maxX: CGFloat = 0
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > width {
+                x = 0; y += lineHeight + spacing; lineHeight = 0
+            }
+            x += size.width + spacing
+            maxX = max(maxX, x - spacing)
+            lineHeight = max(lineHeight, size.height)
+        }
+        return CGSize(width: min(maxX, width), height: y + lineHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX, y = bounds.minY, lineHeight: CGFloat = 0
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if x > bounds.minX, x + size.width > bounds.maxX {
+                x = bounds.minX; y += lineHeight + spacing; lineHeight = 0
+            }
+            view.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            lineHeight = max(lineHeight, size.height)
+        }
     }
 }

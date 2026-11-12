@@ -253,56 +253,121 @@ final class GitHubClient {
         let fallbackURL = Self.rewrite(apiURL) ?? repoURL
 
         // A distinct latest comment is the most specific thing to show.
-        if let comment = thread.subject.latestCommentURL, comment != apiString,
-           let commentURL = URL(string: comment),
+        var comment: (summary: String, url: URL?, isRelease: Bool)?
+        if let commentString = thread.subject.latestCommentURL, commentString != apiString,
+           let commentURL = URL(string: commentString),
            let item = try? await fetch(APIItem.self, commentURL) {
             let who = item.user?.login.map { "@\($0)" } ?? "Someone"
             let verb = item.tagName != nil ? "released \(item.tagName!)" : "commented"
             let body = item.body.map(Self.snippet).flatMap { $0.isEmpty ? nil : $0 }
-            let summary = body.map { "\(who) \(verb): \($0)" } ?? "\(who) \(verb)"
-            return ThreadDetail(url: item.htmlURL.flatMap(URL.init(string:)) ?? fallbackURL,
-                                number: number, summary: summary)
+            comment = (body.map { "\(who) \(verb): \($0)" } ?? "\(who) \(verb)",
+                       item.htmlURL.flatMap(URL.init(string:)), item.tagName != nil)
+        }
+
+        // Non-PR threads only need the comment, or failing that the subject's state.
+        if thread.subject.type != "PullRequest", let comment {
+            return ThreadDetail(url: comment.url ?? fallbackURL, number: number, summary: comment.summary,
+                                tags: comment.isRelease ? [] : [.comment])
         }
 
         guard let subject = try? await fetch(APIItem.self, apiURL) else {
-            return ThreadDetail(url: fallbackURL, number: number, summary: nil)
+            return ThreadDetail(url: comment?.url ?? fallbackURL, number: number, summary: comment?.summary,
+                                tags: comment == nil ? [] : [.comment])
         }
         let url = subject.htmlURL.flatMap(URL.init(string:)) ?? fallbackURL
+        let closed = subject.state == "closed" || subject.merged == true || subject.mergedAt != nil
 
-        // For PRs, a review submitted around the notification time is usually the news.
-        if thread.subject.type == "PullRequest",
-           let review = await latestReview(apiURL), Self.near(review.submittedAt, thread.updatedAt) {
+        guard thread.subject.type == "PullRequest" else {
+            return ThreadDetail(url: url, number: number, summary: Self.stateSummary(subject, type: thread.subject.type),
+                                tags: closed ? [.closed] : [])
+        }
+
+        // PRs are tagged by where they stand (each reviewer's latest decision), not only by the newest event,
+        // so an approved PR stays under Approved after later pushes or comments.
+        var tags: Set<ActivityKind> = closed ? [.closed] : []
+        // Without reviews the tags would be wrong; leave the detail unresolved so the next poll retries.
+        guard let reviews = await reviews(apiURL) else {
+            return ThreadDetail(url: url, number: number, summary: nil)
+        }
+        let decision = Self.reviewDecision(reviews)
+        if !closed {
+            if let approvers = decision.approvedBy, !approvers.isEmpty, decision.changesBy.isEmpty { tags.insert(.approved) }
+            if !decision.changesBy.isEmpty { tags.insert(.changesRequested) }
+        }
+        if comment != nil { tags.insert(.comment) }
+
+        // What happened most recently: a comment, a review near the notification time, or the PR's state.
+        if let comment {
+            return ThreadDetail(url: comment.url ?? url, number: number, summary: comment.summary, tags: tags)
+        }
+        if let review = reviews.last, Self.near(review.submittedAt, thread.updatedAt) {
             let who = review.user?.login.map { "@\($0)" } ?? "Someone"
             let verb: String
             switch review.state {
             case "APPROVED": verb = "approved"
             case "CHANGES_REQUESTED": verb = "requested changes"
             case "DISMISSED": verb = "had a review dismissed"
-            default: verb = "reviewed"
+            default: verb = "reviewed"; tags.insert(.comment)
             }
             let body = review.body.map(Self.snippet).flatMap { $0.isEmpty ? nil : $0 }
-            let reviewURL = review.htmlURL.flatMap(URL.init(string:)) ?? url
-            return ThreadDetail(url: reviewURL, number: number,
-                                summary: body.map { "\(who) \(verb): \($0)" } ?? "\(who) \(verb)")
+            return ThreadDetail(url: review.htmlURL.flatMap(URL.init(string:)) ?? url, number: number,
+                                summary: body.map { "\(who) \(verb): \($0)" } ?? "\(who) \(verb)", tags: tags)
         }
-        return ThreadDetail(url: url, number: number, summary: Self.stateSummary(subject, type: thread.subject.type))
+        var summary = Self.stateSummary(subject, type: "PullRequest") ?? ""
+        if !closed {
+            if !decision.changesBy.isEmpty {
+                summary += " · changes requested by " + decision.changesBy.map { "@\($0)" }.joined(separator: ", ")
+            } else if let approvers = decision.approvedBy, !approvers.isEmpty {
+                summary += " · approved by " + approvers.map { "@\($0)" }.joined(separator: ", ")
+            }
+        }
+        return ThreadDetail(url: url, number: number, summary: summary, tags: tags)
+    }
+
+    /// Each reviewer's latest decisive review (approve / request changes); comment-only reviews don't override.
+    private static func reviewDecision(_ reviews: [APIReview]) -> (approvedBy: [String]?, changesBy: [String]) {
+        var latest: [String: String] = [:]
+        var order: [String] = []
+        for review in reviews {
+            guard let login = review.user?.login,
+                  ["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].contains(review.state) else { continue }
+            if latest[login] == nil { order.append(login) }
+            latest[login] = review.state
+        }
+        let approved = order.filter { latest[$0] == "APPROVED" }
+        let changes = order.filter { latest[$0] == "CHANGES_REQUESTED" }
+        return (approved, changes)
     }
 
     func htmlURL(for thread: GitHubThread) async -> URL {
         await details(for: thread).url
     }
 
+    /// GET and decode, retrying up to three times with backoff on network errors and 5xx/403 responses.
     private func fetch<T: Decodable>(_ type: T.Type, _ url: URL) async throws -> T {
-        let (data, response) = try await session.data(for: request(url))
-        _ = try check(response, data)
-        return try JSONDecoder().decode(T.self, from: data)
+        var attempt = 0
+        while true {
+            do {
+                let (data, response) = try await session.data(for: request(url))
+                _ = try check(response, data)
+                return try JSONDecoder().decode(T.self, from: data)
+            } catch GitHubError.http(let code, let body) where code < 500 && code != 403 {
+                throw GitHubError.http(code, body)
+            } catch {
+                attempt += 1
+                if attempt > 3 { throw error }
+                NSLog("Belfry: GET \(url.path) failed (\(error)), retry \(attempt)")
+                try await Task.sleep(nanoseconds: UInt64(attempt) * 1_000_000_000)
+            }
+        }
     }
 
-    private func latestReview(_ pullURL: URL) async -> APIReview? {
+    /// Submitted reviews, oldest first.
+    private func reviews(_ pullURL: URL) async -> [APIReview]? {
         var c = URLComponents(url: pullURL.appendingPathComponent("reviews"), resolvingAgainstBaseURL: false)!
         c.queryItems = [URLQueryItem(name: "per_page", value: "100")]
         guard let url = c.url, let reviews = try? await fetch([APIReview].self, url) else { return nil }
-        return reviews.filter { $0.state != "PENDING" }.max { ($0.submittedAt ?? "") < ($1.submittedAt ?? "") }
+        return reviews.filter { $0.state != "PENDING" }.sorted { ($0.submittedAt ?? "") < ($1.submittedAt ?? "") }
     }
 
     private static func stateSummary(_ item: APIItem, type: String) -> String? {
@@ -379,6 +444,8 @@ struct ThreadDetail: Equatable {
     let number: Int?
     /// What happened, e.g. "@sam approved" or "@kim commented: looks good".
     let summary: String?
+    /// Which PR sub-tabs this thread belongs to; a PR can be in several (approved and commented).
+    var tags: Set<ActivityKind> = []
 }
 
 /// Loose shape shared by issues, pull requests, comments and releases.
@@ -473,4 +540,9 @@ struct ReviewRequest: Decodable, Identifiable, Equatable {
     var repoFullName: String {
         repositoryURL.components(separatedBy: "/repos/").last ?? repositoryURL
     }
+}
+
+/// Facets of a thread's state used by the PR sub-tabs.
+enum ActivityKind: Hashable {
+    case comment, approved, changesRequested, closed
 }

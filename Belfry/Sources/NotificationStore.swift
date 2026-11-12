@@ -15,6 +15,7 @@ final class NotificationStore: ObservableObject {
     /// nil until checked; false when macOS will not show Belfry's banners.
     @Published private(set) var bannersAllowed: Bool?
     @Published var selectedTab: ThreadTab = .all
+    @Published var prSubTab: PRSubTab = .all
     /// Open PRs waiting on your review, newest activity first.
     @Published private(set) var reviewRequests: [ReviewRequest] = []
     /// PR URL -> login of whoever asked for the review.
@@ -40,11 +41,19 @@ final class NotificationStore: ObservableObject {
 
     var unreadCount: Int { threads.count }
 
-    func count(for tab: ThreadTab) -> Int {
-        tab == .review ? reviewRequests.count : threads.filter(tab.contains).count
+    func count(for tab: ThreadTab) -> Int { threads.filter(tab.contains).count }
+
+    func count(for sub: PRSubTab) -> Int {
+        sub == .review ? reviewRequests.count
+            : threads.filter { ThreadTab.pullRequests.contains($0) && sub.contains(detail(for: $0)) }.count
     }
 
-    private var tabThreads: [GitHubThread] { threads.filter(selectedTab.contains) }
+    private var tabThreads: [GitHubThread] {
+        threads.filter { thread in
+            selectedTab.contains(thread)
+                && (selectedTab != .pullRequests || prSubTab.contains(detail(for: thread)))
+        }
+    }
 
     var groupedByRepo: [(repo: String, threads: [GitHubThread])] {
         Dictionary(grouping: tabThreads, by: { $0.repository.fullName })
@@ -108,12 +117,16 @@ final class NotificationStore: ObservableObject {
             lastModified = result.lastModified
             lastChecked = Date()
             lastError = nil
-            guard let fresh = result.threads else { return } // 304: nothing changed
-            allThreads = fresh.filter(\.unread)
-            await notifyNew(allThreads, client: client, skipping: announcedReviews)
+            if let fresh = result.threads { // nil on 304: nothing changed
+                allThreads = fresh.filter(\.unread)
+                await notifyNew(allThreads, client: client, skipping: announcedReviews)
+            }
         } catch {
             lastError = error.localizedDescription
         }
+        // PR sub-tabs sort by review state, so resolve every PR thread up front. This also runs after a 304,
+        // which retries any lookup that failed earlier (failed PR lookups are not cached).
+        for thread in allThreads where thread.subject.type == "PullRequest" { loadDetail(for: thread) }
     }
 
     // MARK: Banners
@@ -260,7 +273,10 @@ final class NotificationStore: ObservableObject {
         loadingDetails.insert(thread.id)
         Task {
             let detail = await GitHubClient(token: token).details(for: thread)
-            details[thread.id] = (thread.updatedAt, detail)
+            // A PR always resolves to some summary; nil means the lookup failed, so retry on the next poll.
+            if detail.summary != nil || thread.subject.type != "PullRequest" {
+                details[thread.id] = (thread.updatedAt, detail)
+            }
             loadingDetails.remove(thread.id)
         }
     }
@@ -365,13 +381,12 @@ enum CIFilter: String, CaseIterable, Identifiable {
 
 /// Tabs in the dropdown, by notification subject type.
 enum ThreadTab: String, CaseIterable, Identifiable {
-    case all, review, pullRequests, issues, ci, other
+    case all, pullRequests, issues, ci, other
     var id: String { rawValue }
 
     var label: String {
         switch self {
         case .all: return "All"
-        case .review: return "Review"
         case .pullRequests: return "PRs"
         case .issues: return "Issues"
         case .ci: return "CI"
@@ -382,11 +397,39 @@ enum ThreadTab: String, CaseIterable, Identifiable {
     func contains(_ thread: GitHubThread) -> Bool {
         switch self {
         case .all: return true
-        case .review: return thread.reason == "review_requested"
         case .pullRequests: return thread.subject.type == "PullRequest"
         case .issues: return thread.subject.type == "Issue"
         case .ci: return thread.isCI
         case .other: return !thread.isCI && thread.subject.type != "PullRequest" && thread.subject.type != "Issue"
+        }
+    }
+}
+
+/// Nested tabs under PRs. Review comes from search; the rest sort PR notifications by latest activity.
+enum PRSubTab: String, CaseIterable, Identifiable {
+    case all, review, comments, approved, changesRequested, closed
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .all: return "All"
+        case .review: return "Review"
+        case .comments: return "Comments"
+        case .approved: return "Approved"
+        case .changesRequested: return "Changes"
+        case .closed: return "Merged/Closed"
+        }
+    }
+
+    /// `detail` is nil while it is still loading; such rows only appear under All.
+    func contains(_ detail: ThreadDetail?) -> Bool {
+        switch self {
+        case .all: return true
+        case .review: return false
+        case .comments: return detail?.tags.contains(.comment) == true
+        case .approved: return detail?.tags.contains(.approved) == true
+        case .changesRequested: return detail?.tags.contains(.changesRequested) == true
+        case .closed: return detail?.tags.contains(.closed) == true
         }
     }
 }
