@@ -43,16 +43,32 @@ struct SettingsView: View {
                 }
                 Text("GitHub's X-Poll-Interval is respected when it asks for a longer wait.")
                     .font(.caption).foregroundStyle(.secondary)
+                Picker("CI notifications", selection: $store.ciFilter) {
+                    ForEach(CIFilter.allCases) { Text($0.label).tag($0) }
+                }
+                Text("Applies to the list, the unread count and banners. Hidden runs stay unread on GitHub.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Toggle("Play sound with banners", isOn: $store.soundEnabled)
                 Toggle("Launch at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, enabled in setLaunchAtLogin(enabled) }
                 if let loginItemError {
                     Text(loginItemError).font(.caption).foregroundStyle(.red)
                 }
-                Button("Send test banner") { store.sendTestBanner() }
+                HStack {
+                    Button("Send test banner") { store.sendTestBanner() }
+                    Spacer()
+                    Button("Notification settings…") { store.openNotificationSettings() }
+                }
+                if store.bannersAllowed == false {
+                    Label("macOS is blocking Belfry's banners. Open Notification settings, turn on "
+                          + "Allow notifications and choose the Banners style.",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption).foregroundStyle(.orange)
+                }
             }
         }
         .formStyle(.grouped)
+        .onAppear { store.refreshBannerPermission() }
         .frame(width: 460)
         .fixedSize(horizontal: false, vertical: true)
     }

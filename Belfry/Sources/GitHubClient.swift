@@ -65,6 +65,17 @@ struct GitHubThread: Codable, Identifiable, Equatable {
         CIRun(title: subject.title)?.workflow ?? subject.title
     }
 
+    var isCI: Bool {
+        reason == "ci_activity" || subject.type == "CheckSuite" || subject.type == "WorkflowRun"
+    }
+
+    var isCIFailure: Bool {
+        guard isCI else { return false }
+        if let run = CIRun(title: subject.title) { return run.outcome == "failed" || run.outcome == "timed out" }
+        let t = subject.title.lowercased()
+        return t.contains("fail") || t.contains("timed out")
+    }
+
     var typeSymbol: String {
         switch subject.type {
         case "PullRequest": return "arrow.triangle.pull"

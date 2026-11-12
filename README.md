@@ -5,8 +5,10 @@ Belfry polls your GitHub notifications and shows each new one as a native macOS
 banner. Clicking a banner opens the pull request, issue or comment in your browser.
 
 - Menu-bar bell with your unread count
-- Dropdown of unread notifications grouped by repository. Click to open,
-  ✓ to mark read, or "Mark all read"
+- Dropdown with tabs by type (All, PRs, Issues, CI, Other) and unread items
+  grouped by repository. Click to open, ✓ to mark read, or "Mark all read"
+- CI filter: show all CI runs, failures only, or none. It applies to the list,
+  the count and the banners
 - Every banner and row says what actually happened, not just GitHub's reason
   code: "@sam approved: looks good", "@kim commented: …", "Merged by @lee",
   "✗ Failed on feat/x" (CI rows link to that branch's runs)
@@ -43,6 +45,10 @@ To install, copy `build/Build/Products/Release/Belfry.app` into
 On first launch macOS asks whether Belfry may send notifications. Choose
 **Allow**. Under System Settings → Notifications → Belfry, set the alert
 style to **Banners** (or **Alerts** if you want them to stay until dismissed).
+
+If you clicked "Don't Allow", macOS drops every banner silently. Belfry shows
+an orange "macOS is blocking Belfry's banners" strip with a button that opens
+the right settings page.
 
 On first launch with an empty history, Belfry only shows banners for activity
 from the last 24 hours and quietly marks everything older as seen.

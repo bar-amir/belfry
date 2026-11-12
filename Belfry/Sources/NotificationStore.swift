@@ -6,17 +6,25 @@ import UserNotifications
 final class NotificationStore: ObservableObject {
     static let shared = NotificationStore()
 
-    @Published private(set) var threads: [GitHubThread] = []
+    /// Every unread thread from GitHub; `threads` is what the CI filter lets through.
+    @Published private(set) var allThreads: [GitHubThread] = []
     @Published private(set) var lastError: String?
     @Published private(set) var lastChecked: Date?
     @Published private(set) var isRefreshing = false
     @Published private(set) var hasToken = false
+    /// nil until checked; false when macOS will not show Belfry's banners.
+    @Published private(set) var bannersAllowed: Bool?
+    @Published var selectedTab: ThreadTab = .all
     /// Resolved "what happened" per thread, keyed by thread id and valid for one `updated_at`.
     @Published private(set) var details: [String: (updatedAt: String, detail: ThreadDetail)] = [:]
     private var loadingDetails: Set<String> = []
 
     @AppStorage("pollIntervalSeconds") var pollIntervalSeconds: Double = 60
     @AppStorage("soundEnabled") var soundEnabled = true
+    @AppStorage("ciFilter") var ciFilter: CIFilter = .all
+
+    var threads: [GitHubThread] { allThreads.filter { ciFilter.allows($0) } }
+    var hiddenCount: Int { allThreads.count - threads.count }
 
     /// Most banners posted in one poll; anything beyond becomes a single summary banner.
     private let maxBannersPerPoll = 8
@@ -28,8 +36,12 @@ final class NotificationStore: ObservableObject {
 
     var unreadCount: Int { threads.count }
 
+    func count(for tab: ThreadTab) -> Int { threads.filter(tab.contains).count }
+
+    private var tabThreads: [GitHubThread] { threads.filter(selectedTab.contains) }
+
     var groupedByRepo: [(repo: String, threads: [GitHubThread])] {
-        Dictionary(grouping: threads, by: { $0.repository.fullName })
+        Dictionary(grouping: tabThreads, by: { $0.repository.fullName })
             .map { (repo: $0.key, threads: $0.value.sorted { $0.updatedAt > $1.updatedAt }) }
             .sorted { ($0.threads.first?.updatedAt ?? "") > ($1.threads.first?.updatedAt ?? "") }
     }
@@ -74,7 +86,7 @@ final class NotificationStore: ObservableObject {
     func poll() async {
         guard let token = currentToken() else {
             hasToken = false
-            threads = []
+            allThreads = []
             lastError = GitHubError.missingToken.errorDescription
             return
         }
@@ -90,8 +102,8 @@ final class NotificationStore: ObservableObject {
             lastChecked = Date()
             lastError = nil
             guard let fresh = result.threads else { return } // 304: nothing changed
-            threads = fresh.filter(\.unread)
-            await notifyNew(threads, client: client)
+            allThreads = fresh.filter(\.unread)
+            await notifyNew(allThreads, client: client)
         } catch {
             lastError = error.localizedDescription
         }
@@ -106,7 +118,8 @@ final class NotificationStore: ObservableObject {
         var toNotify: [GitHubThread] = []
         for thread in threads where seen.isNew(thread) {
             // On the very first run only announce the last day's activity; seed the rest silently.
-            if !firstRun || thread.updatedAt >= dayAgo { toNotify.append(thread) }
+            // Filtered-out threads are still marked seen, so re-enabling CI doesn't replay old runs.
+            if ciFilter.allows(thread), !firstRun || thread.updatedAt >= dayAgo { toNotify.append(thread) }
             seen.mark(thread)
         }
         seen.save()
@@ -144,7 +157,24 @@ final class NotificationStore: ObservableObject {
             UNNotificationRequest(identifier: "summary-\(UUID().uuidString)", content: content, trigger: nil))
     }
 
+    /// Re-reads macOS's permission; banners are silently dropped while it is denied.
+    func refreshBannerPermission() {
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            let allowed = settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional
+            let styleOK = settings.alertStyle != .none
+            Task { @MainActor in self.bannersAllowed = allowed && styleOK }
+        }
+    }
+
+    static let notificationSettingsURL =
+        URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=io.github.baramir.belfry")!
+
+    func openNotificationSettings() {
+        NSWorkspace.shared.open(Self.notificationSettingsURL)
+    }
+
     func sendTestBanner() {
+        refreshBannerPermission()
         let content = UNMutableNotificationContent()
         content.title = "Belfry is ringing"
         content.subtitle = "Test notification"
@@ -195,7 +225,7 @@ final class NotificationStore: ObservableObject {
 
     func markRead(_ thread: GitHubThread) {
         guard let token = currentToken() else { return }
-        threads.removeAll { $0.id == thread.id }
+        allThreads.removeAll { $0.id == thread.id }
         lastModified = nil
         Task {
             do { try await GitHubClient(token: token).markRead(threadId: thread.id) }
@@ -205,7 +235,7 @@ final class NotificationStore: ObservableObject {
 
     func markAllRead() {
         guard let token = currentToken() else { return }
-        threads = []
+        allThreads = []
         lastModified = nil
         Task {
             do { try await GitHubClient(token: token).markAllRead() }
@@ -250,6 +280,55 @@ struct SeenStore: Codable {
         }
         if let data = try? JSONEncoder().encode(self) {
             try? data.write(to: Self.fileURL, options: .atomic)
+        }
+    }
+}
+
+/// Which CI notifications (workflow and check-suite runs) to show and announce.
+enum CIFilter: String, CaseIterable, Identifiable {
+    case all, failuresOnly, none
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .all: return "All CI runs"
+        case .failuresOnly: return "Failures only"
+        case .none: return "None"
+        }
+    }
+
+    func allows(_ thread: GitHubThread) -> Bool {
+        guard thread.isCI else { return true }
+        switch self {
+        case .all: return true
+        case .failuresOnly: return thread.isCIFailure
+        case .none: return false
+        }
+    }
+}
+
+/// Tabs in the dropdown, by notification subject type.
+enum ThreadTab: String, CaseIterable, Identifiable {
+    case all, pullRequests, issues, ci, other
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .all: return "All"
+        case .pullRequests: return "PRs"
+        case .issues: return "Issues"
+        case .ci: return "CI"
+        case .other: return "Other"
+        }
+    }
+
+    func contains(_ thread: GitHubThread) -> Bool {
+        switch self {
+        case .all: return true
+        case .pullRequests: return thread.subject.type == "PullRequest"
+        case .issues: return thread.subject.type == "Issue"
+        case .ci: return thread.isCI
+        case .other: return !thread.isCI && thread.subject.type != "PullRequest" && thread.subject.type != "Issue"
         }
     }
 }

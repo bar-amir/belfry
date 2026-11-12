@@ -7,12 +7,15 @@ struct MenuContentView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
+            if store.bannersAllowed == false { permissionWarning }
+            tabs
             Divider()
             content
             Divider()
             footer
         }
-        .frame(width: 380)
+        .frame(width: 400)
+        .onAppear { store.refreshBannerPermission() }
     }
 
     private var header: some View {
@@ -35,6 +38,29 @@ struct MenuContentView: View {
         .padding(10)
     }
 
+    private var permissionWarning: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "bell.slash.fill").foregroundStyle(.orange)
+            Text("macOS is blocking Belfry's banners.").font(.callout)
+            Spacer()
+            Button("Fix…") { store.openNotificationSettings() }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(Color.orange.opacity(0.12))
+    }
+
+    private var tabs: some View {
+        Picker("", selection: $store.selectedTab) {
+            ForEach(ThreadTab.allCases) { tab in
+                let n = store.count(for: tab)
+                Text(n > 0 ? "\(tab.label) \(n)" : tab.label).tag(tab)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .padding(.horizontal, 10).padding(.bottom, 8)
+    }
+
     @ViewBuilder
     private var content: some View {
         if let error = store.lastError {
@@ -45,8 +71,11 @@ struct MenuContentView: View {
                 }
             }
             .padding(12)
-        } else if store.threads.isEmpty {
-            Text(store.lastChecked == nil ? "Checking GitHub…" : "You're all caught up.")
+        } else if store.groupedByRepo.isEmpty {
+            Text(store.lastChecked == nil ? "Checking GitHub…"
+                 : store.selectedTab != .all && !store.threads.isEmpty ? "Nothing in \(store.selectedTab.label)."
+                 : store.hiddenCount > 0 ? "Nothing to show. \(store.hiddenCount) CI runs hidden."
+                 : "You're all caught up.")
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(20)
@@ -73,12 +102,19 @@ struct MenuContentView: View {
     }
 
     private var listHeight: CGFloat {
-        let estimate = CGFloat(store.threads.count) * 66 + CGFloat(store.groupedByRepo.count) * 24
+        let rows = store.groupedByRepo.reduce(0) { $0 + $1.threads.count }
+        let estimate = CGFloat(rows) * 66 + CGFloat(store.groupedByRepo.count) * 24
         return min(max(estimate, 80), 460)
     }
 
     private var footer: some View {
         HStack {
+            Picker("", selection: $store.ciFilter) {
+                ForEach(CIFilter.allCases) { Text("CI: \($0.label)").tag($0) }
+            }
+            .labelsHidden()
+            .fixedSize()
+            .help("Which CI runs to show and announce")
             if let checked = store.lastChecked {
                 Text("Checked \(checked.formatted(date: .omitted, time: .shortened))")
                     .font(.caption).foregroundStyle(.secondary)

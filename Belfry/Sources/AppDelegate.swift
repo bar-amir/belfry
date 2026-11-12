@@ -15,6 +15,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
             if let error { NSLog("Belfry: notification authorization error: \(error)") }
             NSLog("Belfry: notifications authorized = \(granted)")
+            Task { @MainActor in NotificationStore.shared.refreshBannerPermission() }
+        }
+        // Pick up changes made in System Settings while Belfry runs.
+        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification,
+                                               object: nil, queue: .main) { _ in
+            Task { @MainActor in NotificationStore.shared.refreshBannerPermission() }
         }
         Task { @MainActor in
             NotificationStore.shared.start()
@@ -28,7 +34,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         let client = GitHubClient(token: token)
         do {
-            let threads = try await client.fetchNotifications(ifModifiedSince: nil).threads ?? []
+            let threads = (try await client.fetchNotifications(ifModifiedSince: nil).threads ?? []).filter(\.unread)
+            print("Tabs: " + ThreadTab.allCases.map { tab in "\(tab.label) \(threads.filter(tab.contains).count)" }
+                .joined(separator: " · "))
+            print("CI filter: " + CIFilter.allCases.map { f in "\(f.label) → \(threads.filter(f.allows).count)" }
+                .joined(separator: " · "))
             for thread in threads.prefix(15) {
                 let d = await client.details(for: thread)
                 print("[\(thread.repository.fullName)\(d.number.map { " #\($0)" } ?? "")] \(thread.displayTitle)")
