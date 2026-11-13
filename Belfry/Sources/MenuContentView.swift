@@ -10,6 +10,8 @@ struct MenuContentView: View {
     @FocusState private var searchFocused: Bool
     @FocusState private var listFocused: Bool
     @Namespace private var tabs
+    @Environment(\.colorScheme) private var systemScheme
+    @AppStorage("panelAppearance") private var panelAppearance: PanelAppearance = .system
 
     private var inList: Bool { store.hasToken && store.problem != .badToken }
 
@@ -44,7 +46,7 @@ struct MenuContentView: View {
         }
         .frame(width: panelWidth)
         .background(SpaceBackground())
-        .environment(\.colorScheme, .dark)
+        .environment(\.colorScheme, panelAppearance == .night ? .dark : systemScheme)
         .focusable()
         .focusEffectDisabled()
         .focused($listFocused)
@@ -166,6 +168,16 @@ struct MenuContentView: View {
                     .padding(.horizontal, Spacing.gutter)
                     .padding(.top, 12)
                     .transition(.opacity.combined(with: .offset(y: -6)))
+                if store.prSubTab == .review {
+                    Label("Every open PR waiting on your review, from GitHub search, including ones with no unread notification.",
+                          systemImage: "info.circle")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, Spacing.gutter)
+                        .padding(.top, 8)
+                        .transition(.opacity)
+                }
             }
         }
         .animation(spring, value: store.selectedTab)
@@ -477,7 +489,7 @@ struct FooterBar: View {
         .padding(.horizontal, 14)
         .frame(height: 50)
         .liquidGlass(RoundedRectangle(cornerRadius: 18), tint: pending == nil ? nil : Theme.open.opacity(0.25))
-        .shadow(color: .black.opacity(0.35), radius: 14, y: 6)
+        .shadow(color: .black.opacity(0.22), radius: 14, y: 6)
     }
 }
 
@@ -794,7 +806,6 @@ struct ItemRow: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Theme.text)
                     .lineLimit(2)
-                    .padding(.trailing, 62)
                 if let summary {
                     HStack(alignment: .center, spacing: 6) {
                         if let actor { Identicon(login: actor, size: 15) }
@@ -823,6 +834,7 @@ struct ItemRow: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.trailing, 66)
         }
         .overlay(alignment: .topTrailing) { if !isExiting { trailing } }
         .padding(.horizontal, Spacing.cardInset)
@@ -834,13 +846,14 @@ struct ItemRow: View {
                     Capsule().fill(Theme.accent).frame(width: 2.5).padding(.vertical, 10).glow(Theme.accent, radius: 3)
                         .transition(.scale(scale: 0.2, anchor: .center).combined(with: .opacity))
                 } else if hovering {
-                    Color.white.opacity(0.04)
+                    Theme.hover
                 }
             }
         )
         .modifier(OpenEffect(phase: demoOpen ?? openPhase))
         .modifier(ExitEffect(phase: demoExit?.1 ?? exitPhase, kind: exitKind ?? .done))
         .contentShape(Rectangle())
+        .linkPointer()
         .onHover { inside in withAnimation(.easeOut(duration: 0.15)) { hovering = inside } }
         .onTapGesture { openRow() }
         .onAppear { store.loadDetail(for: item.primary) }
@@ -882,31 +895,34 @@ struct ItemRow: View {
         [detail?.number.map { "#\($0)" }, item.primary.reasonLabel].compactMap { $0 }.joined(separator: ", ")
     }
 
-    @ViewBuilder
+    /// Time on top, then the actions. Done is always there, quietly, so rows show they can be acted on;
+    /// Mute joins it on hover or selection. The column has a fixed width, so text never moves.
     private var trailing: some View {
-        if hovering || selected {
-            HStack(spacing: 5) {
-                Button { store.requestExit(.done, [item], animated: !reduceMotion) } label: {
-                    Image(systemName: "checkmark")
-                }
-                .buttonStyle(IconButtonStyle(size: 28, tint: Theme.open))
-                .help("Mark done (E)")
-                .accessibilityLabel("Mark done")
-                Button { store.requestExit(.mute, [item], animated: !reduceMotion) } label: {
-                    Image(systemName: "bell.slash")
-                }
-                .buttonStyle(IconButtonStyle(size: 28))
-                .help("Mute this thread (M)")
-                .accessibilityLabel("Mute")
-            }
-            .transition(.opacity.combined(with: .scale(scale: 0.85, anchor: .trailing)))
-        } else {
+        let active = hovering || selected
+        return VStack(alignment: .trailing, spacing: 6) {
             Text(ItemRow.short(item.primary.updatedAt))
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
                 .foregroundStyle(Theme.secondaryText)
                 .padding(.top, 2)
-                .transition(.opacity)
+            HStack(spacing: 5) {
+                if active {
+                    Button { store.requestExit(.mute, [item], animated: !reduceMotion) } label: {
+                        Image(systemName: "bell.slash")
+                    }
+                    .buttonStyle(IconButtonStyle(size: 28))
+                    .help("Mute this thread (M)")
+                    .accessibilityLabel("Mute")
+                    .transition(.opacity.combined(with: .scale(scale: 0.8, anchor: .trailing)))
+                }
+                Button { store.requestExit(.done, [item], animated: !reduceMotion) } label: {
+                    Image(systemName: "checkmark")
+                }
+                .buttonStyle(IconButtonStyle(size: 28, tint: active ? Theme.open : Theme.secondaryText, quiet: !active))
+                .help("Mark done (E)")
+                .accessibilityLabel("Mark done")
+            }
         }
+        .frame(width: 61, alignment: .trailing)
     }
 
     private static let parser = ISO8601DateFormatter()
@@ -975,12 +991,13 @@ struct ReviewRow: View {
                     Theme.accent.opacity(0.09)
                     Capsule().fill(Theme.accent).frame(width: 2.5).padding(.vertical, 10)
                 } else if hovering {
-                    Color.white.opacity(0.04)
+                    Theme.hover
                 }
             }
         )
         .modifier(OpenEffect(phase: openPhase))
         .contentShape(Rectangle())
+        .linkPointer()
         .onHover { hovering = $0 }
         .onTapGesture {
             store.selection = pr.id
@@ -1029,7 +1046,7 @@ struct OrbitView: View {
                 let angle = t * 0.8
                 let moon = CGPoint(x: c.x + cos(angle) * r * 1.95, y: c.y + sin(angle) * r * 0.62)
                 let ring = Path(ellipseIn: CGRect(x: c.x - r * 1.95, y: c.y - r * 0.62, width: r * 3.9, height: r * 1.24))
-                ctx.stroke(ring, with: .color(.white.opacity(0.14)), lineWidth: 1)
+                ctx.stroke(ring, with: .color(Theme.ring), lineWidth: 1)
                 let behind = sin(angle) < 0
                 let moonPath = Path(ellipseIn: CGRect(x: moon.x - 3, y: moon.y - 3, width: 6, height: 6))
                 if behind { ctx.fill(moonPath, with: .color(Color(hex: "#DCE7FF").opacity(0.6))) }
@@ -1089,7 +1106,7 @@ struct ShimmerBar: View {
             RoundedRectangle(cornerRadius: 4)
                 .fill(Theme.glassStrong)
                 .overlay(
-                    LinearGradient(colors: [.clear, .white.opacity(0.12), .clear], startPoint: .leading, endPoint: .trailing)
+                    LinearGradient(colors: [.clear, Theme.glassStrong, .clear], startPoint: .leading, endPoint: .trailing)
                         .frame(width: width * 0.5)
                         .offset(x: (phase * 1.6 - 0.55) * width)
                 )
@@ -1169,5 +1186,13 @@ struct BelfryMark: View {
             )
             .overlay(RoundedRectangle(cornerRadius: size * 0.26).stroke(Theme.hairlineStrong))
             .accessibilityHidden(true)
+    }
+}
+
+extension View {
+    /// The pointing-hand cursor over things that open a page (macOS 15 and later).
+    @ViewBuilder
+    func linkPointer() -> some View {
+        if #available(macOS 15, *) { pointerStyle(.link) } else { self }
     }
 }

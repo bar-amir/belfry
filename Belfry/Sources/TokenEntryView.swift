@@ -45,7 +45,7 @@ struct TokenEntryView: View {
                         .focused($fieldFocused)
                         .padding(.horizontal, 10)
                         .frame(height: 32)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(Color(hex: "#05080F").opacity(0.85)))
+                        .liquidGlass(RoundedRectangle(cornerRadius: 8))
                         .overlay(RoundedRectangle(cornerRadius: 8).stroke(
                             error != nil ? AnyShapeStyle(Theme.danger)
                                 : (fieldFocused ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Theme.hairlineStrong)),

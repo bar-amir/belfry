@@ -2,7 +2,8 @@
 
 A small native macOS menu-bar app that rings when something happens on GitHub. It has a quiet night-sky look
 of its own: a faint starfield, one ice-blue accent, GitHub's state colours muted so they inform rather than shout,
-macOS Liquid Glass on the controls that float, and small animations for every action. All of it stays still
+macOS Liquid Glass on the controls that float, and small animations for every action. It follows Light and
+Dark Mode with a daylight variant, or stays a night sky if you prefer (Settings › Panel). All of it stays still
 when Reduce Motion is on.
 
 <p align="center"><img src="docs/media/inbox.png" width="420" alt="The Belfry inbox: repositories as cards, each row with a state icon, what happened, and labels"></p>

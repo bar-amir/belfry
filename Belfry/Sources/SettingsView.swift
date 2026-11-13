@@ -7,6 +7,7 @@ struct SettingsView: View {
     @State private var loginItemError: String?
     @State private var confirmDisconnect = false
     @AppStorage("animatedSky") private var animatedSky = true
+    @AppStorage("panelAppearance") private var panelAppearance: PanelAppearance = .system
 
     private let intervals: [Double] = [60, 120, 300, 600, 900]
 
@@ -61,6 +62,9 @@ struct SettingsView: View {
             }
 
             Section("General") {
+                Picker("Panel", selection: $panelAppearance) {
+                    ForEach(PanelAppearance.allCases) { Text($0.label).tag($0) }
+                }
                 Toggle("Animated sky", isOn: $animatedSky)
                 Toggle("Open Belfry at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, enabled in setLaunchAtLogin(enabled) }

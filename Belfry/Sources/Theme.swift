@@ -5,30 +5,65 @@ import SwiftUI
 /// state colours muted so they inform rather than shout. The panel is always dark by design; every text colour
 /// clears 4.5:1 on `canvas`. Glass comes from macOS itself (Liquid Glass on macOS 26 and later).
 enum Theme {
-    static let canvas = Color(hex: "#080B11")
-    static let text = Color(hex: "#E8EDF3")
-    static let secondaryText = Color(hex: "#9DA7B3")
-    static let tertiaryText = Color(hex: "#7F8996")
-    static let surface = Color(hex: "#0E131C")
-    static let glass = Color.white.opacity(0.045)
-    static let glassStrong = Color.white.opacity(0.08)
-    static let hairline = Color.white.opacity(0.08)
-    static let hairlineStrong = Color.white.opacity(0.15)
+    static let canvas = dyn("#F3F6FB", "#080B11")
+    static let text = dyn("#1B2230", "#E8EDF3")
+    static let secondaryText = dyn("#535D6D", "#9DA7B3")
+    static let tertiaryText = dyn("#65707F", "#7F8996")
+    static let surface = dyn("#FFFFFF", "#0E131C")
+    static let glass = dyn("#1B2230", "#FFFFFF", lightAlpha: 0.04, darkAlpha: 0.045)
+    static let glassStrong = dyn("#1B2230", "#FFFFFF", lightAlpha: 0.07, darkAlpha: 0.08)
+    static let hover = dyn("#1B2230", "#FFFFFF", lightAlpha: 0.04, darkAlpha: 0.04)
+    static let hairline = dyn("#1B2230", "#FFFFFF", lightAlpha: 0.09, darkAlpha: 0.08)
+    static let hairlineStrong = dyn("#1B2230", "#FFFFFF", lightAlpha: 0.16, darkAlpha: 0.15)
+    /// Stand-in for glass where the system can't composite it (offscreen renders).
+    static let glassFallback = dyn("#FFFFFF", "#182030")
 
     /// Ice blue: selection, focus, the tab bar.
-    static let accent = Color(hex: "#9CC3FF")
-    /// Moonlight: the one primary button.
-    static let moon = Color(hex: "#E8EDF3")
-    static let onMoon = Color(hex: "#0B0F16")
+    static let accent = dyn("#2D65C8", "#9CC3FF")
+    /// The one primary button: ink by day, moonlight by night.
+    static let moon = dyn("#1B2230", "#E8EDF3")
+    static let onMoon = dyn("#F3F6FB", "#0B0F16")
+    static let moonSheen = dyn("#FFFFFF", "#FFFFFF", lightAlpha: 0.12, darkAlpha: 0.7)
+    static let moonGlow = dyn("#1B2230", "#FFFFFF", lightAlpha: 0.18, darkAlpha: 0.18)
 
-    static let open = Color(hex: "#7FCB97")
-    static let merged = Color(hex: "#B8A4EE")
-    static let danger = Color(hex: "#EE9A93")
-    static let attention = Color(hex: "#DCC07A")
+    static let open = dyn("#2B7148", "#7FCB97")
+    static let merged = dyn("#6A49BE", "#B8A4EE")
+    static let danger = dyn("#B83F35", "#EE9A93")
+    static let attention = dyn("#7E5B0E", "#DCC07A")
 
-    /// A barely-there sheen used for titles and lit edges.
-    static let starlight = LinearGradient(colors: [Color(hex: "#FFFFFF"), Color(hex: "#C9DDFF")],
+    /// Sky glows, stars and the planet.
+    static let skyGlowA = dyn("#C9DBF6", "#2B3C5E", lightAlpha: 0.9, darkAlpha: 0.45)
+    static let skyGlowB = dyn("#CDE9EE", "#1D3B48", lightAlpha: 0.8, darkAlpha: 0.35)
+    static let star = dyn("#6E8BB8", "#DCE7FF")
+    static let ring = dyn("#1B2230", "#FFFFFF", lightAlpha: 0.18, darkAlpha: 0.14)
+
+    /// A barely-there sheen used for titles.
+    static let starlight = LinearGradient(colors: [dyn("#1B2230", "#FFFFFF"), dyn("#2D4F86", "#C9DDFF")],
                                           startPoint: .topLeading, endPoint: .bottomTrailing)
+
+    /// A colour that follows the panel's appearance.
+    static func dyn(_ light: String, _ dark: String, lightAlpha: CGFloat = 1, darkAlpha: CGFloat = 1) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                ? NSColor(hex: dark).withAlphaComponent(darkAlpha) : NSColor(hex: light).withAlphaComponent(lightAlpha)
+        })
+    }
+}
+
+extension NSColor {
+    convenience init(hex: String) {
+        var value: UInt64 = 0
+        Scanner(string: hex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))).scanHexInt64(&value)
+        self.init(srgbRed: CGFloat((value >> 16) & 0xFF) / 255, green: CGFloat((value >> 8) & 0xFF) / 255,
+                  blue: CGFloat(value & 0xFF) / 255, alpha: 1)
+    }
+}
+
+/// How the panel looks: the night sky always, or night and day following macOS.
+enum PanelAppearance: String, CaseIterable, Identifiable {
+    case system, night
+    var id: String { rawValue }
+    var label: String { self == .system ? "Match system" : "Always night sky" }
 }
 
 /// One rhythm for the panel. Everything outside a card sits on `gutter`; everything inside one on `cardInset`.
@@ -91,9 +126,9 @@ struct LiquidGlass<S: Shape>: ViewModifier {
         } else {
             // Offscreen renders can't blur what's behind, so the stand-in is nearly opaque.
             content
-                .background(shape.fill(Color(hex: "#182030")))
+                .background(shape.fill(Theme.glassFallback))
                 .background(shape.fill(tint?.opacity(0.18) ?? .clear))
-                .overlay(shape.stroke(LinearGradient(colors: [.white.opacity(0.22), .white.opacity(0.06)],
+                .overlay(shape.stroke(LinearGradient(colors: [Theme.hairlineStrong, Theme.hairline],
                                                      startPoint: .top, endPoint: .bottom)))
         }
     }
@@ -126,9 +161,9 @@ struct SpaceBackground: View {
     var body: some View {
         ZStack {
             Theme.canvas
-            RadialGradient(colors: [Color(hex: "#2B3C5E").opacity(0.45), .clear], center: UnitPoint(x: 0.1, y: 0),
+            RadialGradient(colors: [Theme.skyGlowA, .clear], center: UnitPoint(x: 0.1, y: 0),
                            startRadius: 0, endRadius: 300)
-            RadialGradient(colors: [Color(hex: "#1D3B48").opacity(0.35), .clear], center: UnitPoint(x: 0.95, y: 0.35),
+            RadialGradient(colors: [Theme.skyGlowB, .clear], center: UnitPoint(x: 0.95, y: 0.35),
                            startRadius: 0, endRadius: 280)
             if let frozenTime {
                 StarField(time: frozenTime)
@@ -160,7 +195,7 @@ struct StarField: View {
                 let twinkle = 0.55 + 0.45 * sin(time * 0.8 + star.phase)
                 let rect = CGRect(x: star.x * size.width, y: star.y * size.height, width: star.r * 2, height: star.r * 2)
                 context.opacity = 0.18 + 0.45 * twinkle * star.r
-                context.fill(Path(ellipseIn: rect), with: .color(Color(hex: "#DCE7FF")))
+                context.fill(Path(ellipseIn: rect), with: .color(Theme.star))
             }
         }
     }
@@ -190,10 +225,10 @@ struct PrimaryButtonStyle: ButtonStyle {
             .frame(height: height)
             .background(
                 Capsule().fill(Theme.moon)
-                    .overlay(Capsule().fill(LinearGradient(colors: [.white.opacity(0.7), .clear],
+                    .overlay(Capsule().fill(LinearGradient(colors: [Theme.moonSheen, .clear],
                                                            startPoint: .top, endPoint: .center)))
             )
-            .shadow(color: .white.opacity(isEnabled ? 0.18 : 0), radius: 10)
+            .shadow(color: isEnabled ? Theme.moonGlow : .clear, radius: 10)
             .scaleEffect(configuration.isPressed ? 0.96 : 1)
             .animation(.spring(response: 0.25, dampingFraction: 0.6), value: configuration.isPressed)
             .opacity(isEnabled ? 1 : 0.35)
@@ -224,16 +259,29 @@ struct SecondaryButtonStyle: ButtonStyle {
 struct IconButtonStyle: ButtonStyle {
     var size: CGFloat = 28
     var tint: Color = Theme.text
+    /// At rest: an outline only, so a column of them stays light. Same hit area.
+    var quiet = false
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(tint)
             .frame(width: size, height: size)
-            .liquidGlass(Circle(), interactive: true)
+            .modifier(IconSurface(quiet: quiet))
             .scaleEffect(configuration.isPressed ? 0.9 : 1)
             .animation(.spring(response: 0.25, dampingFraction: 0.55), value: configuration.isPressed)
             .contentShape(Circle())
+    }
+}
+
+private struct IconSurface: ViewModifier {
+    let quiet: Bool
+    func body(content: Content) -> some View {
+        if quiet {
+            content.overlay(Circle().stroke(Theme.hairlineStrong))
+        } else {
+            content.liquidGlass(Circle(), interactive: true)
+        }
     }
 }
 
@@ -337,7 +385,7 @@ struct Identicon: View {
             }
         }
         .frame(width: size, height: size)
-        .background(Circle().fill(Color.white.opacity(0.07)))
+        .background(Circle().fill(Theme.glassStrong))
         .clipShape(Circle())
         .overlay(Circle().stroke(color.opacity(0.4), lineWidth: 0.75))
         .accessibilityHidden(true)
