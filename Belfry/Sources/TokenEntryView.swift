@@ -15,7 +15,7 @@ struct TokenEntryView: View {
     var body: some View {
         VStack(spacing: Spacing.section) {
             VStack(spacing: 6) {
-                OrbitView(size: 70)
+                MoonPhaseView(size: 44)
                 Text(kind == .welcome ? "Belfry" : "Reconnect Belfry")
                     .font(.system(size: 24, weight: .heavy, design: .rounded))
                     .foregroundStyle(Theme.starlight)

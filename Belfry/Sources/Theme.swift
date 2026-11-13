@@ -152,52 +152,15 @@ extension View {
 
 // MARK: - Sky
 
-/// A quiet night sky: two faint glows and a slowly twinkling starfield (still under Reduce Motion).
+/// The panel's backdrop: the real sky over you right now (see Sky.swift), on a deep night gradient.
 struct SpaceBackground: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.frozenTime) private var frozenTime
-    @AppStorage("animatedSky") private var animatedSky = true
-
     var body: some View {
         ZStack {
             Theme.canvas
-            RadialGradient(colors: [Theme.skyGlowA, .clear], center: UnitPoint(x: 0.1, y: 0),
-                           startRadius: 0, endRadius: 300)
-            RadialGradient(colors: [Theme.skyGlowB, .clear], center: UnitPoint(x: 0.95, y: 0.35),
-                           startRadius: 0, endRadius: 280)
-            if let frozenTime {
-                StarField(time: frozenTime)
-            } else if reduceMotion || !animatedSky {
-                StarField(time: 0)
-            } else {
-                TimelineView(.animation(minimumInterval: 1 / 20)) { context in
-                    StarField(time: context.date.timeIntervalSinceReferenceDate)
-                }
-            }
+            LinearGradient(colors: [Theme.canvas, Theme.skyGlowA.opacity(0.5)], startPoint: .top, endPoint: .bottom)
+            RealSky()
         }
         .accessibilityHidden(true)
-    }
-}
-
-struct StarField: View {
-    let time: TimeInterval
-    private static let stars: [(x: Double, y: Double, r: Double, phase: Double)] = {
-        var generator = SeededGenerator(seed: 0xBE11F7)
-        return (0..<80).map { _ in
-            (Double.random(in: 0...1, using: &generator), Double.random(in: 0...1, using: &generator),
-             Double.random(in: 0.3...1.0, using: &generator), Double.random(in: 0...(2 * .pi), using: &generator))
-        }
-    }()
-
-    var body: some View {
-        Canvas { context, size in
-            for star in Self.stars {
-                let twinkle = 0.55 + 0.45 * sin(time * 0.8 + star.phase)
-                let rect = CGRect(x: star.x * size.width, y: star.y * size.height, width: star.r * 2, height: star.r * 2)
-                context.opacity = 0.18 + 0.45 * twinkle * star.r
-                context.fill(Path(ellipseIn: rect), with: .color(Theme.star))
-            }
-        }
     }
 }
 

@@ -2,11 +2,16 @@
 
 A small native macOS menu-bar app that rings when something happens on GitHub. It has a quiet night-sky look
 of its own: a faint starfield, one ice-blue accent, GitHub's state colours muted so they inform rather than shout,
-macOS Liquid Glass on the controls that float, and small animations for every action. It follows Light and
-Dark Mode with a daylight variant, or stays a night sky if you prefer (Settings › Panel). All of it stays still
+macOS Liquid Glass on the controls that float, and small animations for every action. Behind it all is the
+real night sky over you, right now: about 5,000 catalogued stars in their true colours, faint constellation
+lines and the Moon in its current phase, placed for your location and the current time, looking up toward the
+south. Location comes from your Mac's time zone (no permission needed) or, if you turn it on, Location
+Services; it never leaves your Mac. A daylight variant that follows Light Mode is in Settings › Sky. All of it stays still
 when Reduce Motion is on.
 
 <p align="center"><img src="docs/media/inbox.png" width="420" alt="The Belfry inbox: repositories as cards, each row with a state icon, what happened, and labels"></p>
+
+<p align="center"><img src="docs/media/sky.png" width="420" alt="Inbox zero over the real evening sky, with the waxing gibbous Moon"></p>
 
 <p align="center"><img src="docs/media/actions.gif" width="420" alt="Mark done, mute, open, done with all and undo, animated"></p>
 
@@ -119,4 +124,4 @@ scripts/make-icon.swift     draws the app icon into the asset catalog
 
 ## License
 
-MIT
+MIT. The star catalog comes from d3-celestial (BSD-3-Clause); see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

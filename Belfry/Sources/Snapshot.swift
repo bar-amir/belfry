@@ -5,6 +5,10 @@ import SwiftUI
 /// data with fictional repositories. Used for design review and audits; never touches GitHub.
 @MainActor
 enum Snapshot {
+    /// A fixed evening for reproducible skies: 2026-11-12 20:00 UTC.
+    static let skyDate: Date = ProcessInfo.processInfo.environment["BELFRY_SKY_DATE"]
+        .flatMap { ISO8601DateFormatter().date(from: $0) } ?? Date(timeIntervalSince1970: 1_794_513_600)
+
     static func renderAll(to folder: URL) {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let store = NotificationStore.shared
@@ -19,6 +23,7 @@ enum Snapshot {
                     .environmentObject(store)
                     .environment(\.snapshotMode, true)
                     .environment(\.frozenTime, 12)
+                    .environment(\.skyDate, Snapshot.skyDate)
                 render(view, dark: dark, to: folder.appendingPathComponent("\(name)-\(dark ? "dark" : "light").png"))
             }
         }
@@ -227,6 +232,7 @@ enum AnimationFrames {
                     .environmentObject(store)
                     .environment(\.snapshotMode, true)
                     .environment(\.frozenTime, 12 + t)
+                    .environment(\.skyDate, Snapshot.skyDate)
                 Snapshot.render(view, dark: true, to: dir.appendingPathComponent(String(format: "%03d.png", i)))
             }
         }
@@ -355,7 +361,7 @@ struct ActionDemo: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .opacity(1 - state.empty)
 
-                EmptyStateView(title: "You're all caught up", message: "Nothing new in orbit.")
+                EmptyStateView(title: "You're all caught up", message: "Nothing new under the stars.")
                     .opacity(state.empty)
                     .scaleEffect(0.96 + 0.04 * state.empty)
             }

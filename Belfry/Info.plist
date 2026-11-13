@@ -26,5 +26,9 @@
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>MIT License</string>
+	<key>NSLocationUsageDescription</key>
+	<string>Belfry uses your location only to draw the real night sky above you. It never leaves your Mac.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Belfry uses your location only to draw the real night sky above you. It never leaves your Mac.</string>
 </dict>
 </plist>

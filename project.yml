@@ -7,7 +7,7 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "0.5.0"
+    MARKETING_VERSION: "0.6.0"
     CURRENT_PROJECT_VERSION: "1"
     CODE_SIGN_IDENTITY: "-"
     CODE_SIGN_STYLE: Manual
@@ -36,3 +36,5 @@ targets:
         LSApplicationCategoryType: public.app-category.developer-tools
         LSUIElement: true
         NSHumanReadableCopyright: "MIT License"
+        NSLocationUsageDescription: "Belfry uses your location only to draw the real night sky above you. It never leaves your Mac."
+        NSLocationWhenInUseUsageDescription: "Belfry uses your location only to draw the real night sky above you. It never leaves your Mac."

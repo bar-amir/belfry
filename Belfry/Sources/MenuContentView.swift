@@ -11,7 +11,7 @@ struct MenuContentView: View {
     @FocusState private var listFocused: Bool
     @Namespace private var tabs
     @Environment(\.colorScheme) private var systemScheme
-    @AppStorage("panelAppearance") private var panelAppearance: PanelAppearance = .system
+    @AppStorage("panelAppearance") private var panelAppearance: PanelAppearance = .night
 
     private var inList: Bool { store.hasToken && store.problem != .badToken }
 
@@ -393,7 +393,7 @@ struct MenuContentView: View {
                                message: "\(store.hiddenByFilter) CI runs are hidden by your filter.",
                                action: ("Show all CI runs", { store.ciFilter = .all }))
             } else {
-                EmptyStateView(title: "You're all caught up", message: "Nothing new in orbit.")
+                EmptyStateView(title: "You're all caught up", message: "Nothing new under the stars.")
             }
         }
         .padding(.bottom, footerClearance - 10)
@@ -1031,41 +1031,6 @@ struct ReviewRow: View {
 
 // MARK: - States
 
-/// Inbox zero: a small moonlit planet with an orbiting moon.
-struct OrbitView: View {
-    var size: CGFloat = 72
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.frozenTime) private var frozenTime
-
-    var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: reduceMotion || frozenTime != nil)) { context in
-            let t = frozenTime ?? (reduceMotion ? 0.8 : context.date.timeIntervalSinceReferenceDate)
-            Canvas { ctx, canvas in
-                let c = CGPoint(x: canvas.width / 2, y: canvas.height / 2)
-                let r = canvas.width * 0.2
-                let angle = t * 0.8
-                let moon = CGPoint(x: c.x + cos(angle) * r * 1.95, y: c.y + sin(angle) * r * 0.62)
-                let ring = Path(ellipseIn: CGRect(x: c.x - r * 1.95, y: c.y - r * 0.62, width: r * 3.9, height: r * 1.24))
-                ctx.stroke(ring, with: .color(Theme.ring), lineWidth: 1)
-                let behind = sin(angle) < 0
-                let moonPath = Path(ellipseIn: CGRect(x: moon.x - 3, y: moon.y - 3, width: 6, height: 6))
-                if behind { ctx.fill(moonPath, with: .color(Color(hex: "#DCE7FF").opacity(0.6))) }
-                var glow = ctx
-                glow.addFilter(.blur(radius: 12))
-                glow.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)),
-                          with: .color(Color(hex: "#9CC3FF").opacity(0.45)))
-                ctx.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)),
-                         with: .linearGradient(Gradient(colors: [Color(hex: "#E8F0FF"), Color(hex: "#7F9CC9"), Color(hex: "#2B3A55")]),
-                                               startPoint: CGPoint(x: c.x - r * 0.7, y: c.y - r * 0.8),
-                                               endPoint: CGPoint(x: c.x + r * 0.8, y: c.y + r)))
-                if !behind { ctx.fill(moonPath, with: .color(Color(hex: "#DCE7FF"))) }
-            }
-        }
-        .frame(width: size * 1.6, height: size)
-        .accessibilityHidden(true)
-    }
-}
-
 struct EmptyStateView: View {
     let title: String
     let message: String
@@ -1073,7 +1038,7 @@ struct EmptyStateView: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            OrbitView(size: 64)
+            MoonPhaseView(size: 34)
             Text(title)
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(Theme.text)

@@ -7,7 +7,9 @@ struct SettingsView: View {
     @State private var loginItemError: String?
     @State private var confirmDisconnect = false
     @AppStorage("animatedSky") private var animatedSky = true
-    @AppStorage("panelAppearance") private var panelAppearance: PanelAppearance = .system
+    @AppStorage("constellationLines") private var constellationLines = true
+    @ObservedObject private var sky = SkyLocation.shared
+    @AppStorage("panelAppearance") private var panelAppearance: PanelAppearance = .night
 
     private let intervals: [Double] = [60, 120, 300, 600, 900]
 
@@ -61,11 +63,18 @@ struct SettingsView: View {
                     .font(.caption).foregroundStyle(Color.secondary)
             }
 
-            Section("General") {
+            Section("Sky") {
                 Picker("Panel", selection: $panelAppearance) {
                     ForEach(PanelAppearance.allCases) { Text($0.label).tag($0) }
                 }
-                Toggle("Animated sky", isOn: $animatedSky)
+                Toggle("Twinkling stars", isOn: $animatedSky)
+                Toggle("Constellation lines", isOn: $constellationLines)
+                Toggle("Use my precise location for the sky", isOn: $sky.precise)
+                Text("The panel shows the real sky over \(sky.source), right now. Location never leaves your Mac.")
+                    .font(.caption).foregroundStyle(Color.secondary)
+            }
+
+            Section("General") {
                 Toggle("Open Belfry at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, enabled in setLaunchAtLogin(enabled) }
                 if let loginItemError {
@@ -79,7 +88,7 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 1) {
                         Text("Belfry \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")")
                             .fontWeight(.semibold)
-                        Text("No analytics. Talks only to api.github.com.")
+                        Text("No analytics. Talks only to api.github.com. Star data: d3-celestial (BSD-3).")
                             .font(.caption).foregroundStyle(Color.secondary)
                     }
                     Spacer()
